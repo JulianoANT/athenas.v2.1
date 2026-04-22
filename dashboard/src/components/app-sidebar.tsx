@@ -1,194 +1,106 @@
-"use client"
+"use client";
 
-import * as React from "react"
+import * as React from "react";
 
-import { NavMain } from "@/components/nav-main"
-import { NavProjects } from "@/components/nav-projects"
-import { NavUser } from "@/components/nav-user"
-import { TeamSwitcher } from "@/components/team-switcher"
+import { NavMain } from "@/components/nav-main";
+import { NavProjects } from "@/components/nav-projects";
+import { NavUser } from "@/components/nav-user";
+import { TeamSwitcher } from "@/components/team-switcher";
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
   SidebarHeader,
   SidebarRail,
-} from "@/components/ui/sidebar"
-import { IconLayoutRows, IconWaveSine, IconCommand, IconTerminal2, IconRobot, IconBook, IconSettings, IconFrame, IconChartPie, IconMap } from "@tabler/icons-react"
+} from "@/components/ui/sidebar";
+import {
+  IconSpeedboat,
+  IconLayoutDashboard,
+  IconTemperature,
+  IconFrame,
+  IconChartPie,
+  IconBatteryVertical3,
+  IconGps,
+  IconAngle,
+  IconSettings,
+  IconReportAnalytics,
+  IconAdjustments,
+} from "@tabler/icons-react";
 
 // This is sample data.
 const data = {
   user: {
-    name: "shadcn",
-    email: "m@example.com",
+    name: "Lukas",
+    email: "lukas.w@example.com",
     avatar: "/avatars/shadcn.jpg",
   },
   teams: [
     {
-      name: "Acme Inc",
-      logo: (
-        <IconLayoutRows
-        />
-      ),
-      plan: "Enterprise",
-    },
-    {
-      name: "Acme Corp.",
-      logo: (
-        <IconWaveSine
-        />
-      ),
-      plan: "Startup",
-    },
-    {
-      name: "Evil Corp.",
-      logo: (
-        <IconCommand
-        />
-      ),
-      plan: "Free",
+      name: "Athenas",
+      logo: <IconSpeedboat />,
+      plan: "Estrela do Norte",
     },
   ],
   navMain: [
     {
-      title: "Playground",
+      title: "Dashboard",
       url: "#",
-      icon: (
-        <IconTerminal2
-        />
-      ),
-      isActive: true,
-      items: [
-        {
-          title: "History",
-          url: "#",
-        },
-        {
-          title: "Starred",
-          url: "#",
-        },
-        {
-          title: "Settings",
-          url: "#",
-        },
-      ],
+      icon: <IconLayoutDashboard />,
     },
     {
-      title: "Models",
+      title: "Temperatura",
       url: "#",
-      icon: (
-        <IconRobot
-        />
-      ),
-      items: [
-        {
-          title: "Genesis",
-          url: "#",
-        },
-        {
-          title: "Explorer",
-          url: "#",
-        },
-        {
-          title: "Quantum",
-          url: "#",
-        },
-      ],
+      icon: <IconTemperature />,
     },
     {
-      title: "Documentation",
+      title: "GPS",
       url: "#",
-      icon: (
-        <IconBook
-        />
-      ),
-      items: [
-        {
-          title: "Introduction",
-          url: "#",
-        },
-        {
-          title: "Get Started",
-          url: "#",
-        },
-        {
-          title: "Tutorials",
-          url: "#",
-        },
-        {
-          title: "Changelog",
-          url: "#",
-        },
-      ],
+      icon: <IconGps />,
     },
     {
-      title: "Settings",
+      title: "Bateria",
       url: "#",
-      icon: (
-        <IconSettings
-        />
-      ),
-      items: [
-        {
-          title: "General",
-          url: "#",
-        },
-        {
-          title: "Team",
-          url: "#",
-        },
-        {
-          title: "Billing",
-          url: "#",
-        },
-        {
-          title: "Limits",
-          url: "#",
-        },
-      ],
+      icon: <IconBatteryVertical3 />,
+    },
+    {
+      title: "IMU",
+      url: "#",
+      icon: <IconAngle />,
     },
   ],
-  projects: [
+  system: [
     {
-      name: "Design Engineering",
+      name: "Configurações",
       url: "#",
-      icon: (
-        <IconFrame
-        />
-      ),
+      icon: <IconSettings />,
     },
     {
-      name: "Sales & Marketing",
+      name: "Relatórios",
       url: "#",
-      icon: (
-        <IconChartPie
-        />
-      ),
+      icon: <IconReportAnalytics />,
     },
     {
-      name: "Travel",
+      name: "Permissões",
       url: "#",
-      icon: (
-        <IconMap
-        />
-      ),
+      icon: <IconAdjustments />,
     },
   ],
-}
+};
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   return (
-    <Sidebar collapsible="icon" {...props}>
+    <Sidebar collapsible="icon" {...props} variant="inset">
       <SidebarHeader>
-        <TeamSwitcher teams={data.teams} />
+        <TeamSwitcher team={data.teams[0]} />
       </SidebarHeader>
       <SidebarContent>
         <NavMain items={data.navMain} />
-        <NavProjects projects={data.projects} />
+        <NavProjects projects={data.system} />
       </SidebarContent>
       <SidebarFooter>
         <NavUser user={data.user} />
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>
-  )
+  );
 }
