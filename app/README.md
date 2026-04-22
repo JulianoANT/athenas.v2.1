@@ -1,0 +1,1 @@
+Diretório para desenvolvimento do aplicativo

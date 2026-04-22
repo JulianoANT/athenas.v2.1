@@ -1,0 +1,1 @@
+Diretório para desenvolvimento do servidor que se comunica com o receptor e transmite os dados entre os clients conectados.

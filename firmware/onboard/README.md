@@ -1,0 +1,1 @@
+Diretório para desenvolvimento do firmware a ser compilado no ESP LoRa a bordo da embarcação. 
