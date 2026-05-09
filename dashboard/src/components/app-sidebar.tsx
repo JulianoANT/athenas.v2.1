@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Logo from "@/assets/athenas-logo.png";
 
 import { NavMain } from "@/components/nav-main";
 import { NavProjects } from "@/components/nav-projects";
@@ -32,12 +33,12 @@ const data = {
   user: {
     name: "Lukas",
     email: "lukas.w@example.com",
-    avatar: "/avatars/shadcn.jpg",
+    avatar: "https://i.pinimg.com/736x/77/2c/1f/772c1f9814120926d8f569a69c2de1ed.jpg",
   },
   teams: [
     {
       name: "Athenas",
-      logo: <IconSpeedboat />,
+      logo: <img src={Logo} alt="logo" className="size-8 rounded-md" />,
       plan: "Estrela do Norte",
     },
   ],
