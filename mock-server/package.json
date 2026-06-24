@@ -1,0 +1,16 @@
+{
+  "name": "athenas-mock-server",
+  "version": "1.0.0",
+  "description": "Servidor WebSocket que emite o contrato de telemetria Athenas a 5 Hz (200ms), permitindo rodar o sistema sem o ESP32.",
+  "type": "module",
+  "main": "server.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

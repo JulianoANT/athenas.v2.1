@@ -1,73 +1,120 @@
-# React + TypeScript + Vite
+# Athenas OS — Dashboard
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Frontend da **Central de Telemetria Athenas v2.0** (DUNA 2026): um PWA que recebe
+a telemetria da embarcação a **5 Hz** e a transforma em navegação, diagnóstico
+térmico, análise energética e relatórios técnicos.
 
-Currently, two official plugins are available:
+> Visão geral do sistema completo (firmware, contrato, arquitetura) no
+> [README da raiz](../README.md).
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+---
 
-## React Compiler
+## Stack
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- **React 19** + **React Router 7** (HashRouter)
+- **Vite 8** (dev server e build)
+- **Tailwind CSS 4** + **shadcn/ui** (Radix)
+- **Recharts** — gráficos de telemetria
+- **Leaflet** — mapa de navegação em tempo real
+- **SheetJS (xlsx)**, **jsPDF** + **jspdf-autotable**, **html2canvas** — exportação client-side
+- **TypeScript** estrito
 
-## Expanding the ESLint configuration
+---
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## Como rodar
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
+npm run dev      # servidor de desenvolvimento (Vite, http://localhost:5173)
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+O dashboard inicia em **modo Simulação 5 Hz** — funciona sem hardware e sem
+back-end, com os dados gerados no próprio navegador.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+### Scripts npm
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+| Script            | Ação                                                        |
+| ----------------- | ----------------------------------------------------------- |
+| `npm run dev`     | Servidor de desenvolvimento com HMR.                        |
+| `npm run build`   | Type-check (`tsc -b`) + build de produção (`vite build`).   |
+| `npm run preview` | Serve o build de produção localmente.                       |
+| `npm run lint`    | ESLint.                                                     |
+
+---
+
+## Variável de ambiente
+
+Lida pelo Vite (prefixo `VITE_` obrigatório):
+
+| Variável             | Padrão                | Descrição                                                       |
+| -------------------- | --------------------- | -------------------------------------------------------------- |
+| `VITE_TELEMETRY_WS`  | `ws://<host>:8080`    | Endpoint WebSocket usado no modo **Ao vivo**. Aponte para o ESP32 (produção) ou o mock-server (dev). |
+
+Sem essa variável, o modo Ao vivo deriva o endpoint do host atual (`ws`/`wss` +
+hostname + porta `8080`). Veja [`.env.example`](../.env.example) na raiz.
+
+---
+
+## Estrutura de `src/`
+
 ```
+src/
+├── main.tsx                 Entry point; monta Theme/Auth/Telemetry providers
+├── App.tsx                  Boot → Login → Shell (sidebar, header, rotas)
+├── index.css                Tema (Tailwind 4, variáveis Sol/Noite)
+├── routes/                  Árvore de navegação (abas, flag crewOnly)
+├── types/
+│   └── telemetry.ts         Contrato JSON canônico (espelha firmware + mock)
+├── lib/
+│   ├── telemetry/
+│   │   ├── contract.ts      Limiares e modelos da Diretriz (saúde, bateria, algas, Haversine)
+│   │   ├── simulator.ts     Simulador de física 5 Hz (modo Mock)
+│   │   └── provider.tsx     TelemetryProvider: WebSocket/sim, histórico, sessão
+│   ├── auth.tsx             Login Público/Tripulação (Sigilo Tático)
+│   ├── theme.tsx            Tema Sol/Noite
+│   └── export/              Athenas Log: metrics.ts, spreadsheet.ts, report.ts
+├── components/              Sidebar, badges, Sereia, boot, login-gate, gauge, ui/ (shadcn)
+├── hooks/                   Hooks utilitários (ex.: use-mobile)
+├── mocks/                   Dados estáticos de apoio
+└── pages/
+    ├── dashboard/           Visão Geral
+    ├── passadico/           Passadiço & Navegação (mapa, cronômetro)
+    ├── maquinas/            Casa de Máquinas
+    ├── prontuario/          Prontuário & Diagnósticos (térmica/estrutural)
+    └── exportar/            Athenas Log
+```
+
+---
+
+## Modos de telemetria
+
+O badge no topo alterna a fonte de dados (preferência persistida em
+`localStorage`); a lógica vive em `lib/telemetry/provider.tsx`:
+
+- **Simulação · 5 Hz** (Mock): física gerada client-side por `simulator.ts`
+  (arrasto por leme, aquecimento do estator, descarga da bateria, evento de
+  algas). Não requer rede.
+- **Ao vivo · 5 Hz**: conecta em `VITE_TELEMETRY_WS`, valida cada quadro contra o
+  contrato e reconecta automaticamente a cada 2 s se a conexão cair.
+
+O provider mantém o último quadro, um **histórico em alta taxa** (~6 min para os
+gráficos) e um **log de sessão decimado a 1 Hz** (~2 h) usado na exportação.
+
+---
+
+## Login (Sigilo Tático)
+
+Gate de UI (`lib/auth.tsx`), **não** controle de acesso server-side:
+
+- **Avaliador / Público**: só métricas básicas (Passadiço, Casa de Máquinas).
+- **Tripulação Athenas**: senha tática desbloqueia **Prontuário & Diagnósticos**
+  e o **Athenas Log** (rotas com `crewOnly`). Nunca commite uma senha real — ela
+  pode ser configurada em build.
+
+---
+
+## Temas
+
+`lib/theme.tsx` alterna entre **Noite** (navy/ciano, classe `.dark` do Tailwind)
+e **Sol** (alto contraste para luz solar direta). A preferência é persistida em
+`localStorage` e aplicada via `data-theme` no `<html>`.

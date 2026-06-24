@@ -1,0 +1,25 @@
+# Infraestrutura Docker do sistema Athenas.
+#
+# Sobe dois serviços:
+#   - mock-server: servidor WebSocket de telemetria simulada (porta 8080).
+#   - dashboard:   frontend (Vite + React) servido pelo Nginx (porta 5173 -> 80).
+#
+# O dashboard inicia em modo SIMULAÇÃO (client-side): os dados são gerados
+# no próprio navegador, sem depender de back-end. Ao alternar para o modo
+# "Ao vivo", o dashboard conecta em ws://localhost:8080 (o mock-server),
+# que faz o streaming da telemetria em tempo real.
+
+services:
+  mock-server:
+    build: ./mock-server
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  dashboard:
+    build: ./dashboard
+    ports:
+      - "5173:80"
+    depends_on:
+      - mock-server
+    restart: unless-stopped

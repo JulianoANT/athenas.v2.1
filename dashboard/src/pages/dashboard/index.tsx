@@ -1,16 +1,19 @@
-// Dashboard.tsx
+// Visão Geral — painel consolidado em tempo real (Athenas OS v2.0).
+import * as React from "react";
 import {
-  batteryChartConfig,
-  dashboardData,
-  speedChartConfig,
-  temperatureChartConfig,
-} from "@/mocks/dashboard";
+  IconGauge,
+  IconTemperature,
+  IconBolt,
+  IconBattery,
+  IconRoute,
+  IconCompass,
+} from "@tabler/icons-react";
+import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
 
 import {
   Card,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -20,123 +23,82 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart";
-import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
-import { IconTrendingUp } from "@tabler/icons-react";
+import { MetricCard } from "@/components/metric-card";
+import { useTelemetry } from "@/lib/telemetry/provider";
+import { useAuth } from "@/lib/auth";
+import { batteryPercent, toKnots } from "@/lib/telemetry/contract";
 
-function KPI({ title, value, unit }: any) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-sm text-muted-foreground">{title}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="text-2xl font-bold">
-          {value} {unit}
-        </div>
-      </CardContent>
-    </Card>
-  );
+const VIEW_POINTS = 240; // ~48 s a 5 Hz
+
+function timeLabel(t: number) {
+  return new Date(t).toLocaleTimeString([], {
+    minute: "2-digit",
+    second: "2-digit",
+  });
 }
 
-function ChartAreaGradient({
+function LiveArea({
   title,
   subtitle,
-  config,
   data,
-  seriesKey,
-  yKey,
-  yTitle,
-  className,
+  dataKey,
+  unit,
+  color,
 }: {
-  config: ChartConfig;
-  data: any[];
-  seriesKey: string;
   title: string;
   subtitle: string;
-  className?: string;
-  yKey?: string;
-  yTitle?: string;
+  data: { t: number; [k: string]: number }[];
+  dataKey: string;
+  unit: string;
+  color: string;
 }) {
-  const gradientId = `fill-${seriesKey}`;
-
+  const config = {
+    [dataKey]: { label: title, color },
+  } satisfies ChartConfig;
+  const gid = `fill-${dataKey}`;
   return (
-    <Card className={className}>
+    <Card>
       <CardHeader>
         <CardTitle>{title}</CardTitle>
         <CardDescription>{subtitle}</CardDescription>
       </CardHeader>
       <CardContent>
-        <ChartContainer config={config}>
-          <AreaChart
-            accessibilityLayer
-            data={data}
-            margin={{
-              left: 12,
-              right: 12,
-            }}
-          >
-            <CartesianGrid strokeDasharray={"3 3"} />
-
+        <ChartContainer config={config} className="h-[200px] w-full">
+          <AreaChart data={data} margin={{ left: 4, right: 12 }}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} />
             <XAxis
-              dataKey="timestamp"
+              dataKey="t"
               tickLine={false}
               axisLine={false}
               tickMargin={8}
-              tickFormatter={(value) =>
-                typeof value === "number"
-                  ? new Date(value).toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })
-                  : String(value)
-              }
+              minTickGap={40}
+              tickFormatter={timeLabel}
             />
-
             <YAxis
-              label={{
-                value: yTitle,
-                position: "insideTopLeft",
-                offset: 5,
-                style: { textAnchor: "middle", fontSize: 12 },
-              }}
-              dataKey={yKey}
+              width={40}
               tickLine={false}
               axisLine={false}
-              tickMargin={8}
+              tickMargin={4}
+              unit={unit}
             />
-
             <ChartTooltip
               cursor={false}
-              labelFormatter={(value) =>
-                typeof value === "number"
-                  ? new Date(value).toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })
-                  : String(value)
-              }
+              labelFormatter={(v) => timeLabel(Number(v))}
               content={<ChartTooltipContent />}
             />
             <defs>
-              <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-                <stop
-                  offset="5%"
-                  stopColor={`var(--color-${seriesKey})`}
-                  stopOpacity={0.8}
-                />
-                <stop
-                  offset="95%"
-                  stopColor={`var(--color-${seriesKey})`}
-                  stopOpacity={0.1}
-                />
+              <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor={color} stopOpacity={0.7} />
+                <stop offset="95%" stopColor={color} stopOpacity={0.05} />
               </linearGradient>
             </defs>
             <Area
-              dataKey={seriesKey}
-              type="natural"
-              fill={`url(#${gradientId})`}
-              fillOpacity={0.4}
-              stroke={`var(--color-${seriesKey})`}
+              dataKey={dataKey}
+              type="monotone"
+              stroke={color}
+              fill={`url(#${gid})`}
+              isAnimationActive={false}
+              strokeWidth={2}
             />
           </AreaChart>
         </ChartContainer>
@@ -146,50 +108,120 @@ function ChartAreaGradient({
 }
 
 export default function Dashboard() {
-  const { kpis, charts } = dashboardData;
+  const { frame, history, distance_m, sessionStart } = useTelemetry();
+  const { isCrew } = useAuth();
+
+  const points = React.useMemo(
+    () =>
+      history.slice(-VIEW_POINTS).map((s) => ({
+        t: s.t,
+        knots: Number(toKnots(s.gps.speed_kmh).toFixed(2)),
+        temp: s.sensors.temp_c,
+        current: s.sensors.current_a,
+        voltage: s.sensors.voltage_v,
+      })),
+    [history],
+  );
+
+  const f = frame;
+  const knots = f ? toKnots(f.gps.speed_kmh) : 0;
+  const battery = f ? batteryPercent(f.sensors.voltage_v) : 0;
+  const elapsed = Math.max(0, Math.floor((Date.now() - sessionStart) / 1000));
+  const mmss = `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(
+    elapsed % 60,
+  ).padStart(2, "0")}`;
 
   return (
     <div className="space-y-6">
-      {/* KPIs */}
-      <div className="grid gap-4 md:grid-cols-5">
-        <KPI title="Velocidade" value={kpis.speed} unit="km/h" />
-        <KPI title="Velocidade Máx" value={kpis.maxSpeed} unit="km/h" />
-        <KPI title="Bateria" value={kpis.battery} unit="%" />
-        <KPI title="Temperatura" value={kpis.temperature} unit="°C" />
-        <KPI title="Sinal" value={kpis.signal} unit="dBm" />
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+        <MetricCard
+          label="Velocidade"
+          value={knots.toFixed(1)}
+          unit="nós"
+          icon={<IconGauge className="size-4" />}
+        />
+        <MetricCard
+          label="Rumo (COG)"
+          value={f ? f.gps.cog.toFixed(0) : "--"}
+          unit="°"
+          icon={<IconCompass className="size-4" />}
+        />
+        <MetricCard
+          label="Temperatura"
+          value={f ? f.sensors.temp_c.toFixed(1) : "--"}
+          unit="°C"
+          icon={<IconTemperature className="size-4" />}
+          valueColor={f && f.sensors.temp_c >= 70 ? "var(--alert)" : undefined}
+        />
+        {isCrew && (
+          <MetricCard
+            label="Corrente"
+            value={f ? f.sensors.current_a.toFixed(1) : "--"}
+            unit="A"
+            icon={<IconBolt className="size-4" />}
+            valueColor={
+              f && f.sensors.current_a > 18 ? "var(--warn)" : undefined
+            }
+          />
+        )}
+        {isCrew && (
+          <MetricCard
+            label="Bateria"
+            value={battery.toFixed(0)}
+            unit="%"
+            icon={<IconBattery className="size-4" />}
+            hint={f ? `${f.sensors.voltage_v.toFixed(2)} V` : undefined}
+          />
+        )}
+        <MetricCard
+          label="Sessão"
+          value={mmss}
+          icon={<IconRoute className="size-4" />}
+          hint={
+            distance_m != null
+              ? `${distance_m.toFixed(0)} m da estação`
+              : "estação não definida"
+          }
+        />
       </div>
 
-      {/* Charts */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-6">
-        <ChartAreaGradient
+      <div className="grid gap-4 lg:grid-cols-2">
+        <LiveArea
           title="Velocidade"
-          subtitle="Variação da velocidade ao longo do tempo"
-          config={speedChartConfig}
-          data={charts.telemetry}
-          seriesKey="speed"
-          className=" md:col-span-3"
-          yTitle="km/h"
+          subtitle="Nós ao longo da sessão"
+          data={points}
+          dataKey="knots"
+          unit=" kn"
+          color="var(--chart-1)"
         />
-
-        <ChartAreaGradient
-          title="Temperatura"
-          subtitle="Variação da temperatura ao longo do tempo"
-          config={temperatureChartConfig}
-          data={charts.telemetry}
-          seriesKey="temperature"
-          className="md:col-span-3"
-          yTitle="°C"
+        <LiveArea
+          title="Temperatura do estator"
+          subtitle="°C ao longo da sessão"
+          data={points}
+          dataKey="temp"
+          unit="°"
+          color="var(--chart-2)"
         />
-
-        <ChartAreaGradient
-          title="Bateria"
-          subtitle="Variação do nível da bateria ao longo do tempo"
-          config={batteryChartConfig}
-          data={charts.telemetry}
-          seriesKey="battery"
-          className="md:col-span-6"
-          yTitle="V"
-        />
+        {isCrew && (
+          <LiveArea
+            title="Corrente do motor"
+            subtitle="Ampéres (ACS758)"
+            data={points}
+            dataKey="current"
+            unit="A"
+            color="var(--chart-3)"
+          />
+        )}
+        {isCrew && (
+          <LiveArea
+            title="Tensão da bateria"
+            subtitle="Volts (chumbo-ácido)"
+            data={points}
+            dataKey="voltage"
+            unit="V"
+            color="var(--chart-4)"
+          />
+        )}
       </div>
     </div>
   );

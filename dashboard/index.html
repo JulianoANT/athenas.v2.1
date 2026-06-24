@@ -1,10 +1,23 @@
 <!doctype html>
-<html lang="en">
+<html lang="pt-br">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>frontend</title>
+    <meta name="theme-color" content="#0B132B" />
+    <meta
+      name="description"
+      content="Athenas OS v2.0 — Central de Telemetria Avançada da Equipe Athenas (DUNA 2026)."
+    />
+    <title>Athenas OS v2.0 — Central de Telemetria</title>
+    <script>
+      // Aplica o tema antes do React montar para evitar flash (default: noite).
+      try {
+        var t = localStorage.getItem("athenas:theme");
+        if (t !== "sol") document.documentElement.classList.add("dark");
+        document.documentElement.dataset.theme = t === "sol" ? "sol" : "noite";
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

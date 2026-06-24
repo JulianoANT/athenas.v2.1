@@ -1,63 +1,54 @@
 import type * as React from "react";
+import {
+  IconLayoutDashboard,
+  IconCompass,
+  IconEngine,
+  IconReportMedical,
+  IconFileExport,
+} from "@tabler/icons-react";
 
 export interface Route {
   name: string;
   label: string;
   href: string;
-  element: React.ReactNode;
+  icon?: React.ReactNode;
+  /** Visível apenas para a Tripulação Athenas (oculto no modo público). */
+  crewOnly?: boolean;
   children?: Route[];
 }
 
-// Árvore de rotas da aplicação (ajuste conforme você adicionar páginas/rotas reais).
+// Árvore de navegação do Athenas OS. As abas seguem a Diretriz v2.0.
 export const routes: Route[] = [
   {
-    name: "indicators",
-    label: "Indicadores",
+    name: "overview",
+    label: "Visão Geral",
     href: "/",
-    element: null,
+    icon: <IconLayoutDashboard />,
   },
   {
-    name: "temperature",
-    label: "Temperatura",
-    href: "/temperatura",
-    element: null,
+    name: "passadico",
+    label: "Passadiço & Navegação",
+    href: "/passadico",
+    icon: <IconCompass />,
   },
   {
-    name: "gps",
-    label: "GPS",
-    href: "/gps",
-    element: null,
+    name: "maquinas",
+    label: "Casa de Máquinas",
+    href: "/maquinas",
+    icon: <IconEngine />,
   },
   {
-    name: "battery",
-    label: "Bateria",
-    href: "/bateria",
-    element: null,
+    name: "prontuario",
+    label: "Prontuário & Diagnósticos",
+    href: "/prontuario",
+    icon: <IconReportMedical />,
+    crewOnly: true,
   },
   {
-    name: "imu",
-    label: "IMU",
-    href: "/imu",
-    element: null,
-  },
-  {
-    name: "system",
-    label: "Sistema",
-    href: "/sistema",
-    element: null,
-    children: [
-      {
-        name: "observability",
-        label: "Observabilidade",
-        href: "/sistema/observabilidade",
-        element: null,
-      },
-      {
-        name: "access",
-        label: "Acessos",
-        href: "/sistema/acessos",
-        element: null,
-      },
-    ],
+    name: "export",
+    label: "Athenas Log",
+    href: "/exportar",
+    icon: <IconFileExport />,
+    crewOnly: true,
   },
 ];
