@@ -58,6 +58,9 @@ const TelemetryContext = React.createContext<TelemetryContextValue | null>(
 
 function readMode(): TelemetryMode {
   if (typeof window === "undefined") return "mock";
+  // No build público (GitHub Pages) não há backend WebSocket: força Simulação
+  // e ignora qualquer preferência "live" salva localmente.
+  if (import.meta.env.PROD) return "mock";
   return window.localStorage.getItem(MODE_KEY) === "live" ? "live" : "mock";
 }
 

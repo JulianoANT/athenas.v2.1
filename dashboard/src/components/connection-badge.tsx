@@ -9,6 +9,11 @@ import { Button } from "@/components/ui/button";
 import { useTelemetry } from "@/lib/telemetry/provider";
 import type { ConnectionStatus } from "@/types/telemetry";
 
+// Demo pública (GitHub Pages) não tem backend de telemetria ao vivo, então a
+// chave Mock/Ao vivo fica oculta e o app roda 100% em Simulação. Em build local
+// (dev) a chave continua disponível para testar com o hardware/mock-server.
+const DEMO_ONLY = import.meta.env.PROD;
+
 const META: Record<
   ConnectionStatus,
   { label: string; variant: "ok" | "warn" | "alert" | "muted"; Icon: typeof IconBroadcast; spin?: boolean }
@@ -39,15 +44,17 @@ export function ConnectionBadge() {
         <Icon className={`size-3.5 ${m.spin ? "animate-spin" : ""}`} />
         {m.label}
       </Badge>
-      <Button
-        variant="outline"
-        size="sm"
-        className="h-7 font-tech text-[11px] uppercase"
-        onClick={() => setMode(mode === "mock" ? "live" : "mock")}
-        title="Alternar entre simulação e telemetria ao vivo"
-      >
-        {mode === "mock" ? "→ Ao vivo" : "→ Simular"}
-      </Button>
+      {!DEMO_ONLY && (
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-7 font-tech text-[11px] uppercase"
+          onClick={() => setMode(mode === "mock" ? "live" : "mock")}
+          title="Alternar entre simulação e telemetria ao vivo"
+        >
+          {mode === "mock" ? "→ Ao vivo" : "→ Simular"}
+        </Button>
+      )}
     </div>
   );
 }
