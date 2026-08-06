@@ -1,14 +1,21 @@
-// Visão Geral — painel consolidado em tempo real (Athenas OS v2.0).
-import * as React from "react";
+// =============================================================================
+//  Visao Geral — painel consolidado em tempo real (Athenas OS v2.1)
+//
+//  A primeira tela que a tripulacao ve. Prioriza densidade de informacao
+//  acionavel: KPIs no topo, alertas logo abaixo, series temporais em canvas.
+// =============================================================================
+
+import { useMemo } from "react";
 import {
   IconGauge,
   IconTemperature,
   IconBolt,
   IconBattery,
-  IconRoute,
   IconCompass,
+  IconFlame,
+  IconAlertTriangle,
+  IconRotate,
 } from "@tabler/icons-react";
-import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
 
 import {
   Card,
@@ -17,210 +24,266 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import {
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-  type ChartConfig,
-} from "@/components/ui/chart";
 import { MetricCard } from "@/components/metric-card";
-import { useTelemetry } from "@/lib/telemetry/provider";
+import { AlertBanner } from "@/components/alert-banner";
+import { LiveChart, type ChartSeries } from "@/components/charts/live-chart";
+import { CompassRose } from "@/components/nav/compass-rose";
+import { ArtificialHorizon } from "@/components/nav/artificial-horizon-lazy";
+import { SessionClock } from "@/components/session-clock";
 import { useAuth } from "@/lib/auth";
-import { batteryPercent, toKnots } from "@/lib/telemetry/contract";
-
-const VIEW_POINTS = 240; // ~48 s a 5 Hz
-
-function timeLabel(t: number) {
-  return new Date(t).toLocaleTimeString([], {
-    minute: "2-digit",
-    second: "2-digit",
-  });
-}
-
-function LiveArea({
-  title,
-  subtitle,
-  data,
-  dataKey,
-  unit,
-  color,
-}: {
-  title: string;
-  subtitle: string;
-  data: { t: number; [k: string]: number }[];
-  dataKey: string;
-  unit: string;
-  color: string;
-}) {
-  const config = {
-    [dataKey]: { label: title, color },
-  } satisfies ChartConfig;
-  const gid = `fill-${dataKey}`;
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
-        <CardDescription>{subtitle}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <ChartContainer config={config} className="h-[200px] w-full">
-          <AreaChart data={data} margin={{ left: 4, right: 12 }}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} />
-            <XAxis
-              dataKey="t"
-              tickLine={false}
-              axisLine={false}
-              tickMargin={8}
-              minTickGap={40}
-              tickFormatter={timeLabel}
-            />
-            <YAxis
-              width={40}
-              tickLine={false}
-              axisLine={false}
-              tickMargin={4}
-              unit={unit}
-            />
-            <ChartTooltip
-              cursor={false}
-              labelFormatter={(v) => timeLabel(Number(v))}
-              content={<ChartTooltipContent />}
-            />
-            <defs>
-              <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor={color} stopOpacity={0.7} />
-                <stop offset="95%" stopColor={color} stopOpacity={0.05} />
-              </linearGradient>
-            </defs>
-            <Area
-              dataKey={dataKey}
-              type="monotone"
-              stroke={color}
-              fill={`url(#${gid})`}
-              isAnimationActive={false}
-              strokeWidth={2}
-            />
-          </AreaChart>
-        </ChartContainer>
-      </CardContent>
-    </Card>
-  );
-}
+import { useTelemetryStore } from "@/lib/telemetry/store";
+import {
+  useSpeedKnots,
+  useCog,
+  useMotorTemp,
+  useCurrent,
+  useVoltage,
+  useBatteryPercent,
+  useVirtualCoreTemp,
+  useDistance,
+  useAlgaeAlert,
+  useCavitationAlert,
+  useMotorTempFault,
+} from "@/lib/telemetry/selectors";
+import { OVERHEAT_C, TATICA_CURRENT_A } from "@/lib/telemetry/contract";
+import { compassPoint } from "@/lib/math/hydrodynamics";
 
 export default function Dashboard() {
-  const { frame, history, distance_m, sessionStart } = useTelemetry();
   const { isCrew } = useAuth();
 
-  const points = React.useMemo(
-    () =>
-      history.slice(-VIEW_POINTS).map((s) => ({
-        t: s.t,
-        knots: Number(toKnots(s.gps.speed_kmh).toFixed(2)),
-        temp: s.sensors.temp_c,
-        current: s.sensors.current_a,
-        voltage: s.sensors.voltage_v,
-      })),
-    [history],
+  const knots = useSpeedKnots();
+  const cog = useCog();
+  const temp = useMotorTemp();
+  const virtual = useVirtualCoreTemp();
+  const current = useCurrent();
+  const voltage = useVoltage();
+  const battery = useBatteryPercent();
+  const distance_m = useDistance();
+
+  const algae = useAlgaeAlert();
+  const cavitation = useCavitationAlert();
+  const tempFault = useMotorTempFault();
+  const sec = useTelemetryStore((s) => s.sec_w_per_knot);
+
+  // Configuracoes de grafico memoizadas: sem isso, cada render do Dashboard
+  // mudaria a identidade do array e reconstruiria o uPlot do zero.
+  const speedSeries = useMemo<ChartSeries[]>(
+    () => [
+      {
+        key: "knots",
+        label: "Velocidade",
+        color: "var(--chart-1)",
+        unit: "kn",
+      },
+    ],
+    [],
   );
 
-  const f = frame;
-  const knots = f ? toKnots(f.gps.speed_kmh) : 0;
-  const battery = f ? batteryPercent(f.sensors.voltage_v) : 0;
-  const elapsed = Math.max(0, Math.floor((Date.now() - sessionStart) / 1000));
-  const mmss = `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(
-    elapsed % 60,
-  ).padStart(2, "0")}`;
+  const thermalSeries = useMemo<ChartSeries[]>(
+    () => [
+      {
+        key: "temp_c",
+        label: "Sensor fisico",
+        color: "var(--foreground)",
+        unit: "°C",
+        width: 1.6,
+      },
+      {
+        key: "virtual_c",
+        label: "Nucleo virtual",
+        color: "#ff9e2c",
+        unit: "°C",
+        width: 2.2,
+      },
+    ],
+    [],
+  );
+
+  const currentSeries = useMemo<ChartSeries[]>(
+    () => [
+      { key: "current_a", label: "Corrente", color: "var(--chart-3)", unit: "A" },
+    ],
+    [],
+  );
+
+  const efficiencySeries = useMemo<ChartSeries[]>(
+    () => [
+      { key: "sec", label: "Consumo esp.", color: "var(--chart-4)", unit: "W/kn" },
+    ],
+    [],
+  );
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+      {/* --- Alertas de topo --- */}
+      {algae && (
+        <AlertBanner
+          variant="warn"
+          icon={<IconAlertTriangle size={20} />}
+          title="Anomalia de arrasto: possivel bloqueio por algas"
+          message="Corrente elevada e sustentada com velocidade baixa."
+        />
+      )}
+      {cavitation && (
+        <AlertBanner
+          variant="alert"
+          icon={<IconAlertTriangle size={20} />}
+          title="Cavitacao ou arrasto excessivo"
+          message="O consumo especifico disparou sem ganho de velocidade."
+        />
+      )}
+
+      {/* --- KPIs ---
+          2 colunas no celular, 3 no tablet, 6 no desktop. */}
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 xl:grid-cols-6">
         <MetricCard
           label="Velocidade"
           value={knots.toFixed(1)}
-          unit="nós"
+          unit="nos"
           icon={<IconGauge className="size-4" />}
+          valueColor="var(--cyan)"
         />
         <MetricCard
           label="Rumo (COG)"
-          value={f ? f.gps.cog.toFixed(0) : "--"}
+          value={cog.toFixed(0)}
           unit="°"
           icon={<IconCompass className="size-4" />}
+          hint={compassPoint(cog)}
         />
         <MetricCard
-          label="Temperatura"
-          value={f ? f.sensors.temp_c.toFixed(1) : "--"}
+          label="Estator"
+          value={tempFault ? "--" : temp.toFixed(1)}
           unit="°C"
           icon={<IconTemperature className="size-4" />}
-          valueColor={f && f.sensors.temp_c >= 70 ? "var(--alert)" : undefined}
+          valueColor={temp >= OVERHEAT_C ? "var(--alert)" : undefined}
+          hint={
+            Number.isFinite(virtual)
+              ? `virtual ${virtual.toFixed(1)} °C`
+              : undefined
+          }
         />
-        {isCrew && (
+        <MetricCard
+          label="Nucleo virtual"
+          value={Number.isFinite(virtual) ? virtual.toFixed(1) : "--"}
+          unit="°C"
+          icon={<IconFlame className="size-4" />}
+          valueColor="#ff9e2c"
+          hint="preditivo"
+        />
+        {isCrew ? (
           <MetricCard
             label="Corrente"
-            value={f ? f.sensors.current_a.toFixed(1) : "--"}
+            value={current.toFixed(1)}
             unit="A"
             icon={<IconBolt className="size-4" />}
-            valueColor={
-              f && f.sensors.current_a > 18 ? "var(--warn)" : undefined
-            }
+            valueColor={current > TATICA_CURRENT_A ? "var(--warn)" : undefined}
+            hint={`${(voltage * current).toFixed(0)} W`}
+          />
+        ) : (
+          <MetricCard
+            label="Consumo esp."
+            value={sec === null ? "--" : sec.toFixed(0)}
+            unit="W/kn"
+            icon={<IconBolt className="size-4" />}
           />
         )}
-        {isCrew && (
+        {isCrew ? (
           <MetricCard
             label="Bateria"
             value={battery.toFixed(0)}
             unit="%"
             icon={<IconBattery className="size-4" />}
-            hint={f ? `${f.sensors.voltage_v.toFixed(2)} V` : undefined}
+            hint={`${voltage.toFixed(2)} V`}
+          />
+        ) : (
+          <SessionClock
+            hint={
+              distance_m != null
+                ? `${distance_m.toFixed(0)} m da estacao`
+                : "estacao nao definida"
+            }
           />
         )}
-        <MetricCard
-          label="Sessão"
-          value={mmss}
-          icon={<IconRoute className="size-4" />}
-          hint={
-            distance_m != null
-              ? `${distance_m.toFixed(0)} m da estação`
-              : "estação não definida"
-          }
-        />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <LiveArea
-          title="Velocidade"
-          subtitle="Nós ao longo da sessão"
-          data={points}
-          dataKey="knots"
-          unit=" kn"
-          color="var(--chart-1)"
-        />
-        <LiveArea
-          title="Temperatura do estator"
-          subtitle="°C ao longo da sessão"
-          data={points}
-          dataKey="temp"
-          unit="°"
-          color="var(--chart-2)"
-        />
+      {/* --- Instrumentos de navegacao ---
+          No celular a bussola vem primeiro (mais util em campo). */}
+      <div className="grid gap-4 lg:grid-cols-3">
+        <Card className="gap-2">
+          <CardHeader className="pb-0">
+            <CardTitle className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              <IconCompass className="size-4" />
+              Rumo
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex justify-center pt-1">
+            <CompassRose size={200} />
+          </CardContent>
+        </Card>
+
+        <Card className="gap-2 lg:col-span-2">
+          <CardHeader className="pb-0">
+            <CardTitle className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              <IconRotate className="size-4" />
+              Atitude do Casco
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="h-[220px] sm:h-[260px]">
+              <ArtificialHorizon interactive={false} />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* --- Series temporais (Canvas / uPlot) --- */}
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Velocidade</CardTitle>
+            <CardDescription>Nos ao longo da sessao</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <LiveChart series={speedSeries} height={200} />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Termica do Estator</CardTitle>
+            <CardDescription>
+              Sensor fisico (branco) x nucleo virtual preditivo (laranja)
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <LiveChart series={thermalSeries} height={200} />
+          </CardContent>
+        </Card>
+
         {isCrew && (
-          <LiveArea
-            title="Corrente do motor"
-            subtitle="Ampéres (ACS758)"
-            data={points}
-            dataKey="current"
-            unit="A"
-            color="var(--chart-3)"
-          />
+          <Card>
+            <CardHeader>
+              <CardTitle>Corrente do Motor</CardTitle>
+              <CardDescription>Amperes (ACS758, oversampling + EMA)</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <LiveChart series={currentSeries} height={200} />
+            </CardContent>
+          </Card>
         )}
+
         {isCrew && (
-          <LiveArea
-            title="Tensão da bateria"
-            subtitle="Volts (chumbo-ácido)"
-            data={points}
-            dataKey="voltage"
-            unit="V"
-            color="var(--chart-4)"
-          />
+          <Card>
+            <CardHeader>
+              <CardTitle>Consumo Especifico</CardTitle>
+              <CardDescription>
+                Watts por no. Lacunas indicam o barco parado.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <LiveChart series={efficiencySeries} height={200} />
+            </CardContent>
+          </Card>
         )}
       </div>
     </div>

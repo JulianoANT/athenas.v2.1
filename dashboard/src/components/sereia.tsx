@@ -1,29 +1,32 @@
+import sereiaMask from "@/assets/sereia-mask.png";
 import type { VesselHealth } from "@/types/telemetry";
 import { cn } from "@/lib/utils";
+import { HEALTH_COLOR_VAR, HEALTH_LABEL, HEALTH_DESC } from "@/lib/health";
 
-// Avatar Interativo da Sereia Athenas — indicador biológico de integridade do
-// sistema elétrico/térmico (Vessel Health Status):
-//  - serena (verde ciano): sistema nominal estável
-//  - tatica (laranja):      alto arrasto (leme > 30° ou corrente > 18A)
-//  - alerta (vermelho):     sobrecarga, superaquecimento ou bateria crítica
+// =============================================================================
+//  Sereia Athenas — indicador de integridade da embarcação (Vessel Health)
+//
+//  O avatar é a SEREIA DA LOGO OFICIAL do projeto, não um desenho paralelo.
+//  Ter duas sereias diferentes no mesmo sistema (uma na marca, outra no painel)
+//  enfraqueceria a identidade justamente na tela que a banca mais olha.
+//
+//  COMO A COR FUNCIONA:
+//  A logo é uma silhueta. Em vez de manter três arquivos coloridos, usamos a
+//  silhueta como MÁSCARA CSS e pintamos com `background-color`. Assim a cor
+//  vem das variáveis do tema — acompanha os modos Sol/Noite de graça, e trocar
+//  a logo no futuro não exige regerar variação nenhuma.
+//
+//  Estados:
+//   - serena (verde):    sistema nominal estável
+//   - tatica (laranja):  alto arrasto (leme > 30° ou corrente > 18 A)
+//   - alerta (vermelho): sobrecarga, superaquecimento ou bateria crítica
+// =============================================================================
 
-export const HEALTH_COLOR_VAR: Record<VesselHealth, string> = {
-  serena: "var(--ok)",
-  tatica: "var(--warn)",
-  alerta: "var(--alert)",
-};
+// As constantes vivem em @/lib/health para o Fast Refresh funcionar aqui
+// (este arquivo exporta APENAS componentes).
 
-export const HEALTH_LABEL: Record<VesselHealth, string> = {
-  serena: "Serena",
-  tatica: "Tática",
-  alerta: "Alerta",
-};
-
-export const HEALTH_DESC: Record<VesselHealth, string> = {
-  serena: "Sistema nominal estável",
-  tatica: "Alto arrasto detectado",
-  alerta: "Sobrecarga crítica",
-};
+/** Proporção da arte da sereia (recortada da logo oficial): 360 × 565. */
+const ASPECT = 360 / 565;
 
 export function SereiaAvatar({
   health,
@@ -37,77 +40,70 @@ export function SereiaAvatar({
   className?: string;
 }) {
   const color = HEALTH_COLOR_VAR[health];
+
+  // `size` é a ALTURA; a largura sai da proporção da arte. Assim a sereia nunca
+  // distorce, independente de onde o componente é usado.
+  const height = size;
+  const width = Math.round(size * ASPECT);
+
   return (
     <div
-      className={cn("flex flex-col items-center gap-1", className)}
+      className={cn("flex flex-col items-center gap-1.5", className)}
       role="img"
       aria-label={`Sereia ${HEALTH_LABEL[health]}: ${HEALTH_DESC[health]}`}
       title={`${HEALTH_LABEL[health]} — ${HEALTH_DESC[health]}`}
     >
       <div
         className={cn(
-          "relative flex items-center justify-center rounded-full",
+          "relative flex items-center justify-center",
+          // A pulsação carrega significado: parada = nominal, pulsando =
+          // atenção, piscando = crítico. Dá para ler o estado com o rabo do
+          // olho, sem processar a cor.
           health === "tatica" && "animate-pulse",
           health === "alerta" && "animate-blink",
         )}
-        style={{
-          width: size,
-          height: size,
-          color,
-          filter: `drop-shadow(0 0 ${health === "serena" ? 5 : 9}px ${color})`,
-        }}
+        style={{ width, height }}
       >
-        <svg
-          viewBox="0 0 64 100"
-          width={size}
-          height={size}
+        {/* Halo de fundo — reforça o estado sem competir com a silhueta. */}
+        <div
           aria-hidden="true"
-          style={{ overflow: "visible" }}
-        >
-          {/* Anel de status */}
-          <circle
-            cx="32"
-            cy="50"
-            r="30"
-            fill="none"
-            stroke="currentColor"
-            strokeOpacity="0.25"
-            strokeWidth="1.5"
-          />
-          {/* Cabelo fluindo */}
-          <path
-            d="M22 14 C12 16 12 34 20 40 C14 36 16 22 22 18 Z"
-            fill="currentColor"
-            opacity="0.45"
-          />
-          <path
-            d="M42 14 C52 16 52 34 44 40 C50 36 48 22 42 18 Z"
-            fill="currentColor"
-            opacity="0.45"
-          />
-          {/* Cabeça */}
-          <circle cx="32" cy="16" r="7.5" fill="currentColor" />
-          {/* Torso */}
-          <path
-            d="M25 22 C26 30 26 34 30 40 L34 40 C38 34 38 30 39 22 C36 26 28 26 25 22 Z"
-            fill="currentColor"
-          />
-          {/* Cauda sinuosa + nadadeira */}
-          <path
-            d="M30 38
-               C22 48 22 60 30 68
-               C34 72 34 78 29 83
-               C24 90 16 92 12 94
-               C20 90 26 86 30 80
-               C31 86 33 90 38 95
-               C36 88 33 84 33 78
-               C40 72 42 60 36 50
-               C34 46 33 42 34 38 Z"
-            fill="currentColor"
-            opacity="0.92"
-          />
-        </svg>
+          className="absolute inset-0 -z-10 rounded-full"
+          style={{
+            background: `radial-gradient(circle, color-mix(in oklab, ${color} 22%, transparent) 0%, transparent 68%)`,
+          }}
+        />
+
+        {/* A sereia da logo, pintada pela cor do estado via máscara CSS. */}
+        <div
+          style={{
+            width,
+            height,
+            backgroundColor: color,
+            WebkitMaskImage: `url(${sereiaMask})`,
+            maskImage: `url(${sereiaMask})`,
+            WebkitMaskSize: "contain",
+            maskSize: "contain",
+            WebkitMaskRepeat: "no-repeat",
+            maskRepeat: "no-repeat",
+            WebkitMaskPosition: "center",
+            maskPosition: "center",
+            filter: `drop-shadow(0 0 ${health === "serena" ? 5 : 10}px ${color})`,
+            // SEM TRANSICAO — de proposito, e isto NAO e detalhe estetico.
+            //
+            // Com `transition: background-color`, o navegador congela a cor
+            // resolvida no inicio da animacao e nao a reavalia quando o var()
+            // passa a apontar para OUTRA variavel (--ok -> --alert). O
+            // resultado observado em teste: a sereia continuava VERDE durante
+            // um alerta critico, com o style inline correto em `var(--alert)`.
+            //
+            // Um indicador de emergencia que mostra a cor errada e pior que
+            // indicador nenhum. A mudanca de estado deve ser instantanea; quem
+            // carrega a sensacao de urgencia sao as animacoes de pulso e
+            // piscada no elemento pai.
+          }}
+        />
       </div>
+
       {showLabel && (
         <div className="text-center leading-tight">
           <div

@@ -1,7 +1,18 @@
 name: Deploy dashboard to GitHub Pages
 
-# Publica o dashboard (front-end React/Vite, 100% simulado) em GitHub Pages
-# a cada push na branch main.
+# Publica o dashboard (front-end React/Vite) em GitHub Pages a cada push na
+# branch main.
+#
+# ATENCAO — LIMITACAO REAL DESTE DEPLOY:
+# O GitHub Pages serve por HTTPS. Um navegador BLOQUEIA conexoes ws:// (nao
+# criptografadas) a partir de uma pagina https:// — e a regra de "mixed
+# content". Como o ESP32 fala ws:// puro, o painel publicado no Pages NAO
+# consegue conectar no barco.
+#
+# Este deploy serve apenas como vitrine estatica da interface. Para operacao
+# real (bancada ou prova), sirva o painel por HTTP na rede local:
+#   cd dashboard && npm run dev -- --host
+# ou suba o container: docker compose up --build
 
 on:
   push:
@@ -13,7 +24,7 @@ permissions:
   pages: write
   id-token: write
 
-# Um deploy por vez; não cancela um deploy em andamento.
+# Um deploy por vez; nao cancela um deploy em andamento.
 concurrency:
   group: pages
   cancel-in-progress: false
@@ -35,6 +46,10 @@ jobs:
         run: npm install
 
       - name: Build
+        # Subcaminho exigido pelo GitHub Pages. Fora daqui o base fica em "/",
+        # que e o correto para dev, preview e para a imagem Docker/Nginx.
+        env:
+          ATHENAS_BASE: /athenas.v2.0/
         run: npm run build
 
       - name: Upload Pages artifact

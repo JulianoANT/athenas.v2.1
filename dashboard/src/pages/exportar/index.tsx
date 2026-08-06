@@ -1,3 +1,10 @@
+// =============================================================================
+//  ABA 4 — Athenas Log (exportacao)
+//
+//  Geracao de relatorios e planilhas 100% client-side (sem nenhuma chamada de
+//  rede) a partir do log da sessao decimado a 1 Hz.
+// =============================================================================
+
 import * as React from "react";
 import html2canvas from "html2canvas";
 import {
@@ -7,7 +14,9 @@ import {
   IconPhoto,
   IconDatabaseOff,
   IconDownload,
+  IconTrash,
 } from "@tabler/icons-react";
+
 import {
   Card,
   CardContent,
@@ -20,8 +29,11 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { MetricCard } from "@/components/metric-card";
 import { AlertBanner } from "@/components/alert-banner";
-import { SereiaAvatar, HEALTH_LABEL, HEALTH_DESC } from "@/components/sereia";
-import { useTelemetry } from "@/lib/telemetry/provider";
+import { SereiaAvatar } from "@/components/sereia";
+import { HEALTH_LABEL, HEALTH_DESC } from "@/lib/health";
+import { ATHENAS_LOGO, ATHENAS_LOGO_ALT } from "@/assets/logo";
+import { useTelemetryStore } from "@/lib/telemetry/store";
+import { sessionLog } from "@/lib/telemetry/history";
 import {
   computeSessionMetrics,
   formatDuration,
@@ -45,33 +57,50 @@ function tstamp(): string {
 }
 
 export default function Exportar() {
-  const { sessionLog, distance_m, sessionStart, health } = useTelemetry();
+  const distance_m = useTelemetryStore((s) => s.distance_m);
+  const sessionStart = useTelemetryStore((s) => s.sessionStart);
+  const health = useTelemetryStore((s) => s.health);
+  const resetSession = useTelemetryStore((s) => s.resetSession);
 
-  const metrics = React.useMemo<SessionMetrics>(
-    () => computeSessionMetrics(sessionLog),
-    [sessionLog],
+  // O log vive fora do React (buffer circular). `sessionVersion` sobe uma vez
+  // por segundo, quando o log recebe uma amostra — nao 5x por segundo.
+  const sessionVersion = useTelemetryStore((s) => s.sessionVersion);
+
+  const { samples, virtualTemps } = React.useMemo(
+    () => ({
+      samples: sessionLog.samples,
+      virtualTemps: sessionLog.virtualTemps,
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sessionVersion],
   );
 
-  // Prefere a distancia ao vivo (estacao->barco) quando maior que a
-  // distancia percorrida integrada do log.
+  const metrics = React.useMemo<SessionMetrics>(
+    () => computeSessionMetrics(samples, virtualTemps),
+    [samples, virtualTemps],
+  );
+
+  // Prefere a distancia ao vivo (estacao->barco) quando maior que a distancia
+  // percorrida integrada do log.
   const reportMetrics = React.useMemo<SessionMetrics>(() => {
     if (distance_m != null && distance_m > metrics.distance_m) {
-      const d = distance_m;
       return {
         ...metrics,
-        distance_m: d,
-        sec_wh_per_m: d > 0 ? metrics.energy_wh / d : 0,
+        distance_m,
+        sec_wh_per_m: distance_m > 0 ? metrics.energy_wh / distance_m : 0,
       };
     }
     return metrics;
   }, [metrics, distance_m]);
 
-  const empty = sessionLog.length === 0;
+  const empty = samples.length === 0;
   const pngRef = React.useRef<HTMLDivElement>(null);
   const [busy, setBusy] = React.useState<string | null>(null);
 
-  const onXlsx = () => exportXlsx(sessionLog, `athenas-${tstamp()}.xlsx`);
-  const onCsv = () => exportCsv(sessionLog, `athenas-${tstamp()}.csv`);
+  const onXlsx = () =>
+    exportXlsx(samples, `athenas-${tstamp()}.xlsx`, virtualTemps);
+  const onCsv = () =>
+    exportCsv(samples, `athenas-${tstamp()}.csv`, virtualTemps);
   const onPdf = () =>
     exportReport(reportMetrics, health, sessionStart, `athenas-${tstamp()}.pdf`);
 
@@ -83,6 +112,7 @@ export default function Exportar() {
         backgroundColor: HEX.navy,
         scale: 2,
         logging: false,
+        useCORS: true,
       });
       const url = canvas.toDataURL("image/png");
       const a = document.createElement("a");
@@ -91,6 +121,16 @@ export default function Exportar() {
       a.click();
     } finally {
       setBusy(null);
+    }
+  };
+
+  const onReset = () => {
+    if (
+      window.confirm(
+        "Zerar a sessao? Todo o historico e o log acumulado serao descartados. Esta acao nao pode ser desfeita — exporte antes se precisar dos dados.",
+      )
+    ) {
+      resetSession();
     }
   };
 
@@ -103,14 +143,14 @@ export default function Exportar() {
             Athenas Log — Exportacao
           </CardTitle>
           <CardDescription>
-            Geracao de relatorios e planilhas 100% client-side (sem rede) a
-            partir do log da sessao decimado a 1 Hz.
+            Relatorios e planilhas gerados 100% no navegador, sem nenhuma
+            chamada de rede.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant={empty ? "muted" : "ok"}>
-              {sessionLog.length} amostras
+              {samples.length} amostras
             </Badge>
             <Badge variant="outline">
               Inicio: {new Date(sessionStart).toLocaleString("pt-BR")}
@@ -118,6 +158,11 @@ export default function Exportar() {
             <Badge variant="outline">
               Duracao: {formatDuration(metrics.duration_s)}
             </Badge>
+            {metrics.faultySamples > 0 && (
+              <Badge variant="warn">
+                {metrics.faultySamples} com sensor em falha
+              </Badge>
+            )}
           </div>
 
           {empty && (
@@ -125,36 +170,64 @@ export default function Exportar() {
               variant="warn"
               icon={<IconDatabaseOff className="size-5" />}
               title="Sessao sem amostras"
-              message="Aguarde a telemetria acumular dados (1 Hz) antes de exportar. Verifique se o modo de dados esta ativo no Passadico."
+              message="O log so acumula com o ESP32 transmitindo. Verifique o estado da conexao no topo do painel."
             />
           )}
 
-          <div className="flex flex-wrap gap-2">
-            <Button size="lg" onClick={onXlsx} disabled={empty}>
+          {/* Botoes em grid no celular (alvos de toque grandes), em linha no
+              desktop. */}
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+            <Button size="lg" className="h-11" onClick={onXlsx} disabled={empty}>
               <IconFileSpreadsheet />
               Planilha (.xlsx)
             </Button>
             <Button
               size="lg"
               variant="outline"
+              className="h-11"
               onClick={onCsv}
               disabled={empty}
             >
               <IconFileTypeCsv />
               CSV
             </Button>
-            <Button size="lg" variant="outline" onClick={onPdf} disabled={empty}>
+            <Button
+              size="lg"
+              variant="outline"
+              className="h-11"
+              onClick={onPdf}
+              disabled={empty}
+            >
               <IconFileTypePdf />
               Relatorio (PDF)
             </Button>
             <Button
               size="lg"
               variant="outline"
+              className="h-11"
               onClick={onPng}
               disabled={empty || busy === "png"}
             >
               <IconPhoto />
-              {busy === "png" ? "Gerando PNG…" : "PNG"}
+              {busy === "png" ? "Gerando…" : "PNG"}
+            </Button>
+          </div>
+
+          <Separator />
+
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-muted-foreground">
+              Zerar a sessao reinicia o cronometro, o historico dos graficos, a
+              trilha do mapa e o gemeo termico.
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={onReset}
+              className="h-9"
+            >
+              <IconTrash className="size-4" />
+              Zerar sessao
             </Button>
           </div>
         </CardContent>
@@ -165,12 +238,11 @@ export default function Exportar() {
         <CardHeader>
           <CardTitle>Previa das Metricas</CardTitle>
           <CardDescription>
-            Calculadas a partir de {sessionLog.length} amostras da sessao
-            corrente.
+            Calculadas a partir de {samples.length} amostras da sessao corrente.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
             <MetricCard
               label="Velocidade Max"
               value={metrics.maxKnots.toFixed(2)}
@@ -183,18 +255,20 @@ export default function Exportar() {
               value={metrics.peakCurrent.toFixed(1)}
               unit="A"
               valueColor="var(--warn)"
-              hint="ESC Hobbywing 1060"
+              hint={`media ${metrics.avgCurrent.toFixed(1)} A`}
             />
             <MetricCard
-              label="Corrente Media"
-              value={metrics.avgCurrent.toFixed(1)}
-              unit="A"
-            />
-            <MetricCard
-              label="Temp. Max"
+              label="Temp. Max (sensor)"
               value={metrics.tempMax.toFixed(1)}
               unit="°C"
               valueColor="var(--alert)"
+            />
+            <MetricCard
+              label="Temp. Max (virtual)"
+              value={metrics.virtualTempMax.toFixed(1)}
+              unit="°C"
+              valueColor="#ff9e2c"
+              hint="gemeo digital"
             />
             <MetricCard
               label="Distancia"
@@ -213,6 +287,20 @@ export default function Exportar() {
               valueColor="var(--chart-1)"
             />
             <MetricCard
+              label="Adernamento Max"
+              value={metrics.maxRoll.toFixed(1)}
+              unit="°"
+              hint={`caturro ${metrics.maxPitch.toFixed(1)}°`}
+            />
+            <MetricCard
+              label="Estabilidade"
+              value={metrics.stabilityScore.toFixed(0)}
+              unit="/100"
+              valueColor={
+                metrics.stabilityScore < 60 ? "var(--warn)" : "var(--ok)"
+              }
+            />
+            <MetricCard
               label="Duracao"
               value={formatDuration(metrics.duration_s)}
             />
@@ -220,7 +308,7 @@ export default function Exportar() {
 
           <Separator />
 
-          <div className="flex items-start gap-4">
+          <div className="flex flex-col items-start gap-4 sm:flex-row">
             <SereiaAvatar health={health} size={64} showLabel />
             <div className="min-w-0 text-sm text-muted-foreground">
               <div className="mb-1 font-tech uppercase tracking-wide text-foreground">
@@ -232,7 +320,10 @@ export default function Exportar() {
         </CardContent>
       </Card>
 
-      {/* Elemento DEDICADO offscreen para o PNG — SOMENTE cores HEX inline. */}
+      {/* Elemento DEDICADO offscreen para o PNG — SOMENTE cores HEX inline.
+          O html2canvas v1 nao entende oklch()/color-mix(), entao esse painel
+          duplica o conteudo com uma paleta literal em vez de reaproveitar os
+          componentes da tela. */}
       <div
         aria-hidden="true"
         style={{
@@ -245,7 +336,7 @@ export default function Exportar() {
         <div
           ref={pngRef}
           style={{
-            width: 720,
+            width: 760,
             padding: 32,
             background: HEX.navy,
             color: HEX.white,
@@ -255,23 +346,35 @@ export default function Exportar() {
         >
           <div
             style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 16,
               borderBottom: `2px solid ${HEX.cyan}`,
               paddingBottom: 12,
               marginBottom: 20,
             }}
           >
-            <div
-              style={{
-                fontSize: 22,
-                fontWeight: 700,
-                color: HEX.white,
-                letterSpacing: 1,
-              }}
-            >
-              EQUIPE ATHENAS — RELATORIO TECNICO
-            </div>
-            <div style={{ fontSize: 12, color: HEX.cyan, marginTop: 4 }}>
-              Athenas OS v2.0 · {new Date(sessionStart).toLocaleString("pt-BR")}
+            <img
+              src={ATHENAS_LOGO}
+              alt={ATHENAS_LOGO_ALT}
+              style={{ width: 56, height: 56, objectFit: "contain" }}
+              crossOrigin="anonymous"
+            />
+            <div>
+              <div
+                style={{
+                  fontSize: 22,
+                  fontWeight: 700,
+                  color: HEX.white,
+                  letterSpacing: 1,
+                }}
+              >
+                ATHENAS - CENTRAL DE TELEMETRIA
+              </div>
+              <div style={{ fontSize: 12, color: HEX.cyan, marginTop: 4 }}>
+                Relatorio Tecnico · Equipe Athenas ·{" "}
+                {new Date(sessionStart).toLocaleString("pt-BR")}
+              </div>
             </div>
           </div>
 
@@ -280,18 +383,22 @@ export default function Exportar() {
               [
                 ["Velocidade Max", `${metrics.maxKnots.toFixed(2)} nos`],
                 ["Corrente Pico", `${metrics.peakCurrent.toFixed(1)} A`],
-                ["Temp. Max", `${metrics.tempMax.toFixed(1)} C`],
+                ["Temp. Max Sensor", `${metrics.tempMax.toFixed(1)} C`],
+                ["Temp. Max Virtual", `${metrics.virtualTempMax.toFixed(1)} C`],
                 ["Distancia", `${reportMetrics.distance_m.toFixed(0)} m`],
                 ["Energia", `${metrics.energy_wh.toFixed(1)} Wh`],
                 ["SEC", `${reportMetrics.sec_wh_per_m.toFixed(3)} Wh/m`],
+                ["Adernamento Max", `${metrics.maxRoll.toFixed(1)} graus`],
+                ["Estabilidade", `${metrics.stabilityScore.toFixed(0)}/100`],
                 ["Duracao", formatDuration(metrics.duration_s)],
                 ["Amostras", `${metrics.samples}`],
+                ["Sensores em falha", `${metrics.faultySamples}`],
               ] as const
             ).map(([k, v]) => (
               <div
                 key={k}
                 style={{
-                  width: 150,
+                  width: 168,
                   border: `1px solid ${HEX.cyan}`,
                   borderRadius: 8,
                   padding: "10px 12px",
@@ -309,7 +416,7 @@ export default function Exportar() {
                   {k}
                 </div>
                 <div
-                  style={{ fontSize: 20, fontWeight: 700, color: HEX.white }}
+                  style={{ fontSize: 19, fontWeight: 700, color: HEX.white }}
                 >
                   {v}
                 </div>

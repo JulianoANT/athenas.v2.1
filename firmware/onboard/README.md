@@ -1,192 +1,177 @@
-# Athenas v2.0 — Firmware de bordo (onboard)
+# Firmware — ESCRAVO (a bordo da embarcação)
 
-Firmware para **ESP32 DevKit** que coleta a telemetria do barco e a transmite
-em tempo real (5 Hz) para o dashboard via **WebSocket**. É a evolução do
-"Athenas Motor 2026" (que só lia o DS18B20 por polling HTTP) para o **contrato
-completo da Diretriz Athenas v2.0**.
+**Placa:** Heltec WiFi LoRa 32 (V3) — ESP32-S3 + SX1262 + OLED
 
-> **Filosofia de segurança:** o ESP32 é **somente leitura**. Ele **NÃO** comanda
-> motor, leme ou qualquer atuador. O sinal do leme é interceptado por um *tap*
-> **passivo de alta impedância** — apenas observa, não interfere.
+Lê todos os sensores de bordo e transmite por **LoRa 915 MHz** para o mestre em
+terra. **Não há WiFi aqui**: o barco fica a centenas de metros no rio, fora do
+alcance de 2,4 GHz.
 
----
-
-## Sumário
-
-- [Sensores e funcionalidades](#sensores-e-funcionalidades)
-- [Pinagem sugerida (GPIOs)](#pinagem-sugerida-gpios)
-- [Contrato JSON da telemetria](#contrato-json-da-telemetria)
-- [Lógica dos alertas](#lógica-dos-alertas)
-- [Como compilar e gravar (PlatformIO)](#como-compilar-e-gravar-platformio)
-- [Frontend no LittleFS](#frontend-no-littlefs)
-- [Notas de segurança](#notas-de-segurança)
-- [Calibração](#calibração)
+> Visão geral do enlace, tabela de alcance × taxa e roteiro de teste no
+> [README do firmware](../README.md).
 
 ---
 
-## Sensores e funcionalidades
+## Ligação dos sensores
 
-| Recurso | Hardware | Observação |
-|---|---|---|
-| Posição / velocidade / rumo | GPS **Neo-6M** @ 5 Hz | `Serial2`, parsing com TinyGPS++ |
-| Corrente do motor | **ACS758** (-50A..+50A) | filtro de **média móvel** (12 amostras) |
-| Tensão da bateria | divisor resistivo | chumbo-ácido, 0–15 V |
-| Temperatura | **DS18B20** (1-Wire) | leitura não bloqueante (~1 Hz) |
-| Ângulo do leme | **tap passivo** do PWM | interrupção `CHANGE`, mede largura do pulso |
-| Transporte | **AsyncWebServer + WebSocket** | `ws.textAll()` a cada 200 ms (5 Hz) |
+⚠️ **Esta placa não é um ESP32 clássico.** GPIO 22, 23, 25, 27 e 32 **não
+existem** no ESP32-S3. Sobram exatamente dez pinos livres — 1, 2, 4, 5, 6, 7,
+19, 20, 47, 48 — e usamos sete deles.
 
-A arquitetura do `loop()` é **100% não bloqueante**: nenhuma chamada a `delay()`
-no caminho da telemetria. Toda a cadência é feita por temporizadores `millis()`.
-
----
-
-## Pinagem sugerida (GPIOs)
-
-| Sinal | GPIO | Tipo | Notas |
+| Sensor | Interface | Pino | Observação |
 |---|---|---|---|
-| DS18B20 (dados, 1-Wire) | **GPIO 4** | I/O | pull-up **4.7 kΩ** entre dado e 3.3 V |
-| GPS RX (ESP32 ← TX do GPS) | **GPIO 16** | UART2 RX | |
-| GPS TX (ESP32 → RX do GPS) | **GPIO 17** | UART2 TX | |
-| ACS758 (saída analógica) | **GPIO 34** | ADC1_CH6 (só entrada) | condicionar saída de 5 V → ≤3.3 V |
-| Voltímetro (divisor) | **GPIO 35** | ADC1_CH7 (só entrada) | dimensionar para 15 V → ~3.3 V |
-| Leme (tap PWM passivo) | **GPIO 27** | entrada digital + IRQ | **alta impedância**, `INPUT` |
+| **MPU6050** | I2C | **SDA 17 · SCL 18** | **Compartilha o barramento do OLED.** Endereços diferentes (OLED 0x3C, MPU 0x68) convivem sem conflito, e isso poupa os dois pinos que não temos de sobra. |
+| **GPS Neo-6M** | UART1 | **RX 47 · TX 48** | Cruzado: RX do ESP ↔ TX do GPS. |
+| **ACS758** | Analógico | **GPIO 6** | ADC1. Precisa de divisor — o sensor sai em 5 V, a entrada é 3,3 V. |
+| **Divisor de tensão** | Analógico | **GPIO 7** | ADC1. Dimensione para 15 V → 3,3 V. |
+| **DS18B20** | 1-Wire | **GPIO 5** | **Pull-up de 4,7 kΩ obrigatório** entre dados e VCC, senão retorna −127,00 sempre. |
+| **DHT22** | Digital | **GPIO 4** | Datasheet exige ≥ 2 s entre leituras. |
+| **Leme (tap PWM)** | Digital + IRQ | **GPIO 2** | Tap **passivo** de alta impedância no fio de sinal do servo. |
 
-> **Dica ADC:** use **somente pinos do ADC1** (GPIO 32–39) para leitura
-> analógica. O ADC2 conflita com o WiFi e dá leituras instáveis quando a rede
-> está ativa. GPIO 34/35/36/39 são **entrada apenas** (sem pull interno).
-
-**Alimentação**
-- ESP32: 3.3 V (regulado pela placa, alimentada via 5 V/USB ou conversor DC-DC).
-- ACS758: 5 V. O GPS Neo-6M costuma aceitar 3.3–5 V (veja sua placa).
-- **Aterramento comum (GND)** entre ESP32, sensores e a eletrônica do barco.
+Reservados: GPIO 1 (divisor da bateria da placa), 19 e 20 (USB nativo do S3).
 
 ---
 
-## Contrato JSON da telemetria
+## Blindagem de código implementada
 
-Enviado por WebSocket (`/ws`) a **5 Hz**. Formato **exato**:
-
-```json
-{
-  "gps":     { "lat": 0.0, "lng": 0.0, "speed_kmh": 0.0, "cog": 0.0, "fix": false },
-  "sensors": { "current_a": 0.0, "voltage_v": 0.0, "temp_c": 0.0, "rudder_deg": 0 },
-  "status":  { "algae_alert": false, "overheat_alert": false, "battery_low": false }
-}
-```
-
-| Campo | Origem | Unidade |
+| Defesa | Onde | Por quê |
 |---|---|---|
-| `gps.lat`, `gps.lng` | TinyGPS++ `location` | graus decimais |
-| `gps.speed_kmh` | `gps.speed.kmph()` | km/h |
-| `gps.cog` | `gps.course.deg()` | graus (rumo / *course over ground*) |
-| `gps.fix` | `gps.location.isValid()` | booleano (tem *fix*?) |
-| `sensors.current_a` | ACS758 (filtrado) | Ampères (±) |
-| `sensors.voltage_v` | divisor resistivo | Volts (0–15) |
-| `sensors.temp_c` | DS18B20 | °C |
-| `sensors.rudder_deg` | largura do pulso PWM | graus (−45..+45) |
-| `status.*` | lógica de alertas | booleano |
+| **Oversampling 16× + filtro EMA** no ACS758 | `lerCorrente()` | O ADC tem ruído térmico alto. Ler uma vez por ciclo geraria picos irreais de potência e falsos alertas no modelo termodinâmico do painel. |
+| **Rejeição de −127,00 / 85,00** no DS18B20 | `atualizarTempMotor()` | São códigos de **erro** do 1-Wire, não temperaturas. O firmware retém o último valor válido e levanta a flag de falha. |
+| **Rejeição de NaN** no DHT22 | `atualizarDht()` | Falha de timing por vibração do casco. Mesmo tratamento. |
+| **Validação de idade do GPS** (`age() < 1500 ms`) | `atualizarGps()` | Sem isso, um GPS que perdeu o fix reportaria a última posição para sempre e o painel mostraria o barco parado no lugar errado, sem indício de problema. |
+| **Transmissão LoRa assíncrona** | `transmitirPacote()` | Um `transmit()` bloqueante travaria o loop por ~82 ms a cada quadro — 41% da CPU parada, e o GPS perderia bytes da UART. |
+| **Quadro atrasado é descartado** | `transmitirPacote()` | Se o rádio ainda está transmitindo, o quadro é pulado em vez de enfileirado. Melhor perder um quadro do que reportar posição de segundos atrás. |
+| **Zero alocação dinâmica** | todo o arquivo | Nenhum `String`, nenhum `new`. O pacote é um struct global reaproveitado. |
+| **Zero `delay()` no loop** | `loop()` | Tudo cadenciado por `millis()`. Os únicos `delay()` estão no `setup()`. |
+| **Filtro complementar** (α = 0,98) na IMU | `mpuAtualizar()` | Integra o giroscópio (rápido, imune a vibração) e corrige a deriva pelo acelerômetro. É o que impede o horizonte artificial de tremer com o motor ligado. |
+| **WiFi e Bluetooth desligados** | `setup()` | Ninguém para conectar no meio do rio. Economiza energia e tira uma fonte de ruído de 2,4 GHz de perto da antena de 915 MHz. |
 
 ---
 
-## Lógica dos alertas
-
-- **`overheat_alert`** — `temp_c >= 70 °C`.
-- **`battery_low`** — `voltage_v <= 11.8 V` (limiar de chumbo-ácido; ajuste no código).
-- **`algae_alert`** (hélice presa em algas) — disparado quando
-  `current_a > 25 A` **E** `speed_kmh < 2 km/h`, **sustentado por > 1.5 s**.
-  O detector usa um cronômetro `millis()`: a condição precisa **persistir**
-  para evitar falsos positivos em transientes (ex.: partida do motor).
-
----
-
-## Como compilar e gravar (PlatformIO)
-
-Pré-requisitos: [PlatformIO](https://platformio.org/) (CLI ou extensão do VS Code).
+## Gravar
 
 ```bash
-# A partir da pasta firmware/onboard/
-
-# Compilar
-pio run
-
-# Compilar + gravar no ESP32 (detecta a porta automaticamente)
-pio run --target upload
-
-# Abrir o monitor serial (115200 baud)
-pio device monitor
+cd firmware/onboard && ~/.local/bin/pio run -t upload && ~/.local/bin/pio device monitor
 ```
 
-Ambiente em `platformio.ini`: `env:esp32dev`, framework `arduino`,
-`monitor_speed = 115200`.
+Esperado:
 
-**Dependências** (resolvidas automaticamente pelo PlatformIO):
-
-```ini
-ottowinter/ESPAsyncWebServer-esphome @ ^3.0.0   ; HTTP + WebSocket assíncronos
-bblanchon/ArduinoJson @ ^6.21.3                 ; serialização do JSON
-paulstoffregen/OneWire @ ^2.3.7                 ; barramento 1-Wire (DS18B20)
-milesburton/DallasTemperature @ ^3.11.0         ; driver do DS18B20
-mikalhart/TinyGPSPlus @ ^1.0.3                  ; parsing NMEA do Neo-6M
+```
+[Athenas v2.2] ESCRAVO — Heltec V3 (ESP32-S3 + SX1262)
+[IMU] MPU6050 ok (I2C 17/18, compartilhado com o OLED)
+[1-Wire] 1 sensor(es) DS18B20
+[LoRa] 915.0 MHz  SF7  BW125 kHz  20 dBm  (39 bytes/pacote)
+[Athenas] Pronto. Transmitindo a 5.0 Hz.
 ```
 
 ---
 
-## Frontend no LittleFS
+## Diagnóstico do barramento I2C
 
-O dashboard (HTML/JS/CSS) é servido a partir do **LittleFS** (não fica embutido
-no `.cpp`). Para habilitar:
+O firmware **varre o I2C no boot** e imprime tudo o que responder:
 
-1. Coloque os arquivos do frontend em `firmware/onboard/data/` (com `index.html`).
-2. No `platformio.ini`, descomente `board_build.filesystem = littlefs`.
-3. No `src/main.cpp`, descomente o bloco do `LittleFS.begin()` e
-   `server.serveStatic(...)` dentro do `setup()`.
-4. Grave a imagem do filesystem:
-
-```bash
-pio run --target uploadfs
+```
+[I2C] Varrendo o barramento (SDA 17 / SCL 18)...
+[I2C]   0x3C  <- OLED da placa
+[I2C]   0x68  <- MPU6050 (AD0 em GND)
+[IMU] MPU6050 em 0x68 (WHO_AM_I = 0x68)
 ```
 
-O cliente web abre uma conexão em `ws://<IP-do-ESP32>/ws` e recebe o JSON a 5 Hz.
+Leia assim:
 
-### IP estático (recomendado)
-
-Para o dashboard achar o ESP32 sempre no mesmo endereço, descomente as
-constantes de IP no topo do `main.cpp` e a chamada `WiFi.config(...)` no
-`setup()`. Sem isso, descubra o IP no monitor serial após o boot.
-
----
-
-## Notas de segurança
-
-- **Leitura passiva, nunca controle.** O ESP32 **não** aciona motor, leme ou
-  qualquer atuador. Ele apenas **observa**.
-- **Tap de ALTA IMPEDÂNCIA no fio do leme.** O pino do PWM é configurado como
-  `INPUT` (alta impedância), ligado **em paralelo** ao fio de sinal do
-  servo/atuador. Assim ele **não carrega** nem distorce o sinal de controle
-  original — o leme continua respondendo exatamente como sem o ESP32.
-- **Não interromper o fio de sinal.** O *tap* é uma derivação; o sinal segue
-  intacto do controlador para o atuador. Em caso de falha do ESP32, o controle
-  do barco **não** é afetado.
-- **Aterramento comum** é obrigatório para a medição do PWM e dos ADCs.
-- **Isolamento da corrente:** o ACS758 já isola a medição (efeito Hall), mas a
-  sua saída (5 V) precisa ser condicionada para ≤3.3 V antes do ADC do ESP32.
-- **Proteção do ADC:** nunca aplique tensão > 3.3 V nos GPIOs analógicos.
-  Dimensione corretamente o divisor do voltímetro e o condicionamento do ACS758.
-
----
-
-## Calibração
-
-Ajuste estas constantes no `src/main.cpp` conforme seu hardware:
-
-| Constante | Função |
+| O que aparece | Significado |
 |---|---|
-| `ACS758_SENS_V_POR_A` | sensibilidade do ACS758 (0.040 V/A no modelo ±50 A) |
-| `ACS758_OFFSET_V` | tensão de **0 A** vista pelo ADC (≈ Vcc/2 condicionado) |
-| `FILTRO_JANELA` | tamanho da média móvel da corrente (padrão 12) |
-| `TENSAO_BATERIA_MAX` | fundo de escala do voltímetro (15 V) |
-| `LEME_PULSO_MIN/MID/MAX_US` | calibração do PWM do leme (1000/1500/2000 µs) |
-| `LIMIAR_*` | limiares dos alertas (temperatura, bateria, alga) |
+| `0x3C` **e** `0x68` (ou `0x69`) | Tudo certo. |
+| Só `0x3C` | O barramento está bom (o OLED responde) — o problema é a **ligação do MPU6050**. |
+| `NADA no barramento` | Problema de SDA/SCL, alimentação ou GND. |
 
-> **Offset do ACS758:** com **0 A** circulando, leia a tensão no pino do ADC e
-> ajuste `ACS758_OFFSET_V` para esse valor — isso elimina o erro de zero.
+O endereço do MPU é **detectado automaticamente** (0x68 com AD0 em GND ou solto,
+0x69 com AD0 em VCC) — não é preciso configurar nada.
+
+### Se a IMU não responder
+
+O barco **continua transmitindo normalmente**: o painel marca o sensor como em
+falha e todo o resto opera. A retentativa acontece a cada 3 s, então o sensor
+volta sozinho se for reconectado com o barco na água.
+
+> **Erro `i2cWriteReadNonStop returned Error -1` repetindo sem parar** significa
+> firmware antigo. A versão atual sonda de forma silenciosa e só tenta a cada
+> 3 s quando o sensor está ausente. Regrave.
+
+---
+
+## O OLED em campo
+
+```
+ATHENAS ESCRAVO
+────────────────
+TX 1420  ERR 0
+GPS FIX 9 sat
+18.2A 12.40V 54.1C
+FALHA --T-
+```
+
+A última linha marca uma letra por sensor em falha: **G**ps, **I**mu,
+**T**emperatura do motor, **A**mbiente. Traço = sensor nominal.
+
+---
+
+## Ajustar a taxa para ganhar alcance
+
+Se o rio for mais longo do que o SF7 cobre, **baixe a taxa** em vez de forçar o
+rádio:
+
+```cpp
+static const unsigned long INTERVALO_TX_MS = 500;  // 2 Hz
+static const uint8_t LORA_SF = 9;                  // ~5 km
+```
+
+Faça a **mesma** mudança de `LORA_SF` em `receiver/src/main.cpp` e regrave as
+duas placas. Nada no software assume 5 Hz — o dashboard mede a cadência real.
+
+---
+
+## Calibrações pendentes
+
+### Zero do ACS758
+
+Com o motor **desligado**, veja quanto o painel marca em *Corrente*. Se não for
+≈ 0 A: meça com multímetro a tensão que chega **no GPIO 6** (após o divisor),
+coloque esse valor em `ACS758_OFFSET_V` e regrave.
+
+### Gêmeo térmico (α e β)
+
+Os coeficientes do modelo `dT/dt = α·I² − β·(T − T_amb)` são propriedades
+físicas do **seu** conjunto motriz. Os valores de fábrica são estimativas.
+
+Ajuste na tela **Prontuário → Calibração do Gêmeo Térmico** (sem recompilar):
+
+1. **β** — aqueça o motor, **desligue** e cronometre quanto tempo `t` a diferença
+   `(T − T_amb)` leva para cair a **37%** do valor inicial. Então **β = 1/t**.
+2. **α** — rode com corrente **constante** conhecida `I` até estabilizar em
+   `T_eq`. Então **α = β·(T_eq − T_amb)/I²**.
+
+**Critério de acerto:** numa arrancada, a curva **laranja** (núcleo virtual) sobe
+**antes** da **branca** (sensor físico), e as duas **convergem** em regime.
+
+---
+
+## Pacote transmitido
+
+39 bytes binários, definidos em
+[`../shared/athenas_link.h`](../shared/athenas_link.h). O mestre remonta o
+contrato JSON v2.1 completo em terra — o dashboard não sabe que existe um rádio
+no caminho.
+
+Escalas de ponto fixo (não há float no ar):
+
+| Grandeza | Escala | Resolução |
+|---|---|---|
+| latitude / longitude | ×1e7 | ~1 cm |
+| velocidade | cm/s | 0,01 m/s |
+| rumo e atitude | 0,1° | 0,1° |
+| corrente e tensão | 0,01 | 0,01 A / 0,01 V |
+| temperaturas | 0,1 °C | 0,1 °C |
+
+Oito booleanos (fix, algas, superaquecimento, bateria baixa e as quatro flags de
+falha de sensor) cabem em **um** byte de `flags` — cada bit economiza airtime.

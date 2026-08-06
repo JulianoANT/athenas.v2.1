@@ -1,6 +1,6 @@
 import * as React from "react";
 import { IconShieldLock, IconEye, IconAnchor } from "@tabler/icons-react";
-import Logo from "@/assets/athenas-logo.png";
+import { ATHENAS_LOGO, ATHENAS_LOGO_ALT } from "@/assets/logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/lib/auth";
@@ -25,9 +25,9 @@ export function LoginGate({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="panel-grid flex min-h-screen flex-col items-center justify-center bg-[#0b132b] p-6 text-[#dbe9f6]">
-      <img src={Logo} alt="Athenas" className="h-20 w-20 object-contain" />
+      <img src={ATHENAS_LOGO} alt={ATHENAS_LOGO_ALT} className="h-20 w-20 object-contain" />
       <h1 className="mt-4 font-tech text-2xl font-medium uppercase tracking-[0.25em] text-[#48cae4] glow-cyan">
-        Athenas OS v2.0
+        Athenas OS v2.1
       </h1>
       <p className="mb-8 font-tech text-xs tracking-[0.3em] text-[#48cae4]/60">
         central de telemetria · duna 2026

@@ -1,7 +1,13 @@
-// Aba 3 — Prontuário & Diagnósticos (Controle de Danos Térmicos + Avatar
-// Estrutural). Rota crew-only. Monitora o estator (DS18B20): em
-// superaquecimento (>= 70 °C) o painel entra em emergência visual e dispara um
-// alarme sonoro contínuo (Web Audio API) após o usuário armá-lo.
+// =============================================================================
+//  ABA 3 — Prontuario & Diagnosticos (rota crew-only)
+//
+//  Controle de Danos Termicos com Gemeo Digital, avatar estrutural do casco,
+//  diagnostico da atitude (MPU6050) e painel de saude dos sensores.
+//
+//  Em superaquecimento (>= 70 °C) o painel entra em emergencia visual e dispara
+//  um alarme sonoro continuo (Web Audio API) apos a tripulacao arma-lo.
+// =============================================================================
+
 import {
   IconTemperature,
   IconVolume,
@@ -14,6 +20,10 @@ import {
   IconAlertTriangle,
   IconActivity,
   IconSteeringWheel,
+  IconDroplet,
+  IconSatellite,
+  IconRotate,
+  IconPlugConnected,
 } from "@tabler/icons-react";
 
 import {
@@ -29,7 +39,27 @@ import { Separator } from "@/components/ui/separator";
 import { MetricCard } from "@/components/metric-card";
 import { SereiaAvatar } from "@/components/sereia";
 import { AlertBanner } from "@/components/alert-banner";
-import { useTelemetry } from "@/lib/telemetry/provider";
+import { ThermalTwin } from "@/components/thermal/thermal-twin";
+import { ThermalCalibrationPanel } from "@/components/thermal/thermal-calibration-panel";
+import { ArtificialHorizon } from "@/components/nav/artificial-horizon-lazy";
+import { AttitudeReadout } from "@/components/nav/attitude-readout";
+import { useTelemetryStore } from "@/lib/telemetry/store";
+import {
+  useHealth,
+  useMotorTemp,
+  useCurrent,
+  useVoltage,
+  useRudder,
+  useAmbientTemp,
+  useAmbientHumidity,
+  useAlgaeAlert,
+  useBatteryLow,
+  useGpsFault,
+  useImuFault,
+  useMotorTempFault,
+  useAmbientFault,
+  useVirtualCoreTemp,
+} from "@/lib/telemetry/selectors";
 import { OVERHEAT_C, TATICA_RUDDER_DEG } from "@/lib/telemetry/contract";
 import { cn } from "@/lib/utils";
 
@@ -37,29 +67,146 @@ import { Thermometer } from "./thermometer";
 import { StructuralAvatar } from "./structural-avatar";
 import { useThermalAlarm } from "./use-thermal-alarm";
 
+// -----------------------------------------------------------------------------
+//  Painel de saude dos sensores.
+//
+//  A Diretriz exige "Tratamento de Dados Fantasmas": o firmware nunca envia
+//  leitura corrompida — ele retem o ultimo valor valido e levanta uma flag.
+//  Esta tabela e onde essas flags viram informacao acionavel para a tripulacao:
+//  saber QUE sensor caiu e a diferenca entre um diagnostico e um chute.
+// -----------------------------------------------------------------------------
+function SensorHealthPanel() {
+  const gps = useGpsFault();
+  const imu = useImuFault();
+  const motorTemp = useMotorTempFault();
+  const ambient = useAmbientFault();
+  const dropped = useTelemetryStore((s) => s.droppedFrames);
+  const malformed = useTelemetryStore((s) => s.malformedFrames);
+
+  const sensors = [
+    {
+      label: "GPS Neo-6M",
+      hint: "UART2 · GPIO 16/17",
+      fault: gps,
+      icon: <IconSatellite className="size-4" />,
+      faultHint: "sem fix valido ou dado com mais de 1,5 s",
+    },
+    {
+      label: "MPU6050",
+      hint: "I2C · SDA 21 / SCL 22",
+      fault: imu,
+      icon: <IconRotate className="size-4" />,
+      faultHint: "sem resposta no barramento I2C",
+    },
+    {
+      label: "DS18B20 (estator)",
+      hint: "1-Wire · GPIO 4 (pull-up 4k7)",
+      fault: motorTemp,
+      icon: <IconTemperature className="size-4" />,
+      faultHint: "retornou -127 °C ou 85 °C (erro de barramento)",
+    },
+    {
+      label: "DHT22 (ambiente)",
+      hint: "Digital · GPIO 15",
+      fault: ambient,
+      icon: <IconDroplet className="size-4" />,
+      faultHint: "leitura NaN (falha de timing ou conector)",
+    },
+  ];
+
+  const faultCount = sensors.filter((s) => s.fault).length;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex flex-wrap items-center justify-between gap-2">
+          <span className="flex items-center gap-2">
+            <IconPlugConnected className="size-4" />
+            Saude dos Sensores
+          </span>
+          <Badge variant={faultCount === 0 ? "ok" : "warn"}>
+            {faultCount === 0
+              ? "Todos nominais"
+              : `${faultCount} em falha`}
+          </Badge>
+        </CardTitle>
+        <CardDescription>
+          Flags de "Sensor Fault" reportadas pelo firmware. Em falha, o valor
+          exibido no painel e o ultimo valido retido — nao um dado fresco.
+        </CardDescription>
+      </CardHeader>
+
+      <CardContent className="space-y-2">
+        {sensors.map((s) => (
+          <div
+            key={s.label}
+            className="flex items-start justify-between gap-3 rounded-md px-2 py-1.5"
+            style={{
+              background: s.fault
+                ? "color-mix(in oklab, var(--alert) 8%, transparent)"
+                : undefined,
+            }}
+          >
+            <div className="flex min-w-0 items-start gap-2">
+              <span
+                className="mt-0.5 shrink-0"
+                style={{ color: s.fault ? "var(--alert)" : "var(--ok)" }}
+              >
+                {s.icon}
+              </span>
+              <div className="min-w-0">
+                <div className="text-sm font-medium">{s.label}</div>
+                <div className="text-[10px] text-muted-foreground">
+                  {s.fault ? s.faultHint : s.hint}
+                </div>
+              </div>
+            </div>
+            <Badge variant={s.fault ? "alert" : "ok"} className="shrink-0">
+              {s.fault ? "falha" : "ok"}
+            </Badge>
+          </div>
+        ))}
+
+        <Separator className="my-1" />
+
+        {/* Qualidade do enlace WiFi: `seq` do firmware detecta perda de pacotes */}
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+          <span>Qualidade do enlace</span>
+          <span className="font-tech tabular-nums">
+            {dropped} perdidos · {malformed} malformados
+          </span>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Prontuario() {
-  const { frame, health } = useTelemetry();
+  const health = useHealth();
 
-  const sensors = frame?.sensors ?? {
-    current_a: 0,
-    voltage_v: 0,
-    temp_c: 0,
-    rudder_deg: 0,
-  };
-  const status = frame?.status ?? {
-    algae_alert: false,
-    overheat_alert: false,
-    battery_low: false,
-  };
+  const temp_c = useMotorTemp();
+  const virtual = useVirtualCoreTemp();
+  const current_a = useCurrent();
+  const voltage_v = useVoltage();
+  const rudder_deg = useRudder();
+  const ambientTemp = useAmbientTemp();
+  const humidity = useAmbientHumidity();
 
-  const overheat = sensors.temp_c >= OVERHEAT_C || status.overheat_alert;
-  const rudderHigh = Math.abs(sensors.rudder_deg) > TATICA_RUDDER_DEG;
+  const algaeAlert = useAlgaeAlert();
+  const batteryLow = useBatteryLow();
+  const motorTempFault = useMotorTempFault();
+  const ambientFault = useAmbientFault();
+
+  // O alarme so considera superaquecimento quando a leitura e CONFIAVEL: tocar
+  // sirene por causa de um sensor solto queima a confianca da tripulacao.
+  const overheat = !motorTempFault && temp_c >= OVERHEAT_C;
+  const rudderHigh = Math.abs(rudder_deg) > TATICA_RUDDER_DEG;
 
   const alarm = useThermalAlarm(overheat);
 
   return (
     <div className="space-y-6">
-      {/* Banner de emergência térmica */}
+      {/* Banner de emergencia termica */}
       {overheat && (
         <AlertBanner
           variant="alert"
@@ -67,13 +214,13 @@ export default function Prontuario() {
           icon={<IconAlertTriangle className="size-5" />}
           message={
             <>
-              Temperatura em {sensors.temp_c.toFixed(1)} °C — acima do limiar de{" "}
+              Temperatura em {temp_c.toFixed(1)} °C — acima do limiar de{" "}
               {OVERHEAT_C} °C. Reduza a carga do motor imediatamente.
               {alarm.armed
                 ? alarm.muted
                   ? " Alarme sonoro silenciado."
                   : " Alarme sonoro ativo."
-                : " Arme o alarme sonoro para alerta audível."}
+                : " Arme o alarme sonoro para alerta audivel."}
             </>
           }
         />
@@ -87,15 +234,15 @@ export default function Prontuario() {
           ) : (
             <IconShieldCheck className="size-3" />
           )}
-          Térmico {overheat ? "crítico" : "nominal"}
+          Termico {overheat ? "critico" : "nominal"}
         </Badge>
-        <Badge variant={status.battery_low ? "alert" : "ok"}>
+        <Badge variant={batteryLow ? "alert" : "ok"}>
           <IconBattery className="size-3" />
-          Bateria {status.battery_low ? "crítica" : "ok"}
+          Bateria {batteryLow ? "critica" : "ok"}
         </Badge>
-        <Badge variant={status.algae_alert ? "warn" : "muted"}>
+        <Badge variant={algaeAlert ? "warn" : "muted"}>
           <IconPlant className="size-3" />
-          Algas {status.algae_alert ? "detectadas" : "livre"}
+          Algas {algaeAlert ? "detectadas" : "livre"}
         </Badge>
         <Badge variant={rudderHigh ? "warn" : "muted"}>
           <IconSteeringWheel className="size-3" />
@@ -103,13 +250,12 @@ export default function Prontuario() {
         </Badge>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* --- Controle de Danos Térmicos --- */}
+      {/* --- Gemeo termico + termometro --- */}
+      <div className="grid gap-6 xl:grid-cols-2">
+        <ThermalTwin />
+
         <Card
-          className={cn(
-            "transition-colors",
-            overheat && "animate-pulse-alert",
-          )}
+          className={cn("transition-colors", overheat && "animate-pulse-alert")}
           style={
             overheat
               ? {
@@ -123,36 +269,36 @@ export default function Prontuario() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <IconTemperature className="size-4" />
-              Controle de Danos Térmicos
+              Controle de Danos Termicos
             </CardTitle>
             <CardDescription>
-              Estator (DS18B20) — emergência em {OVERHEAT_C} °C
+              Estator (DS18B20) — emergencia em {OVERHEAT_C} °C
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="flex items-stretch gap-4">
-              <div className="w-1/2 shrink-0">
-                <Thermometer temp={sensors.temp_c} />
+            <div className="flex flex-col items-stretch gap-4 sm:flex-row">
+              <div className="mx-auto w-40 shrink-0 sm:mx-0 sm:w-1/2">
+                <Thermometer temp={temp_c} />
               </div>
-              <div className="flex w-1/2 flex-col justify-center gap-3">
+              <div className="flex flex-col justify-center gap-3 sm:w-1/2">
                 <div
-                  className="font-tech text-5xl font-bold leading-none"
-                  style={{
-                    color: overheat ? "var(--alert)" : "var(--cyan)",
-                  }}
+                  className="font-tech text-4xl font-bold leading-none sm:text-5xl"
+                  style={{ color: overheat ? "var(--alert)" : "var(--cyan)" }}
                 >
-                  {sensors.temp_c.toFixed(1)}
+                  {motorTempFault ? "--" : temp_c.toFixed(1)}
                   <span className="ml-1 align-super text-xl text-muted-foreground">
                     °C
                   </span>
                 </div>
                 <div
                   className="font-tech text-sm font-medium uppercase tracking-wide"
-                  style={{
-                    color: overheat ? "var(--alert)" : "var(--ok)",
-                  }}
+                  style={{ color: overheat ? "var(--alert)" : "var(--ok)" }}
                 >
-                  {overheat ? "Superaquecimento" : "Dentro da faixa"}
+                  {motorTempFault
+                    ? "Sensor em falha"
+                    : overheat
+                      ? "Superaquecimento"
+                      : "Dentro da faixa"}
                 </div>
 
                 <Separator className="my-1" />
@@ -164,7 +310,7 @@ export default function Prontuario() {
                       variant="default"
                       size="lg"
                       onClick={alarm.arm}
-                      className="justify-start"
+                      className="h-11 justify-start"
                     >
                       <IconBellRinging className="size-4" />
                       Armar alarme sonoro
@@ -174,7 +320,7 @@ export default function Prontuario() {
                       variant={alarm.muted ? "secondary" : "outline"}
                       size="lg"
                       onClick={alarm.toggleMute}
-                      className="justify-start"
+                      className="h-11 justify-start"
                     >
                       {alarm.muted ? (
                         <IconVolumeOff className="size-4" />
@@ -186,20 +332,45 @@ export default function Prontuario() {
                   )}
                   <div className="text-xs text-muted-foreground">
                     {!alarm.armed
-                      ? "O navegador exige um gesto para liberar áudio."
+                      ? "O navegador exige um gesto para liberar audio."
                       : alarm.sounding
                         ? "Sirene ativa enquanto durar o superaquecimento."
                         : alarm.muted
-                          ? "Som silenciado pela tripulação."
-                          : "Armado — soará ao atingir o limiar."}
+                          ? "Som silenciado pela tripulacao."
+                          : "Armado — soara ao atingir o limiar."}
                   </div>
                 </div>
               </div>
             </div>
           </CardContent>
         </Card>
+      </div>
 
-        {/* --- Avatar Estrutural (Wireframe) --- */}
+      {/* --- Atitude do casco --- */}
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <IconRotate className="size-4" />
+              Diagnostico de Atitude — Horizonte Artificial
+            </CardTitle>
+            <CardDescription>
+              Cinematica naval em WebGL a partir dos angulos de Euler do
+              MPU6050.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="h-[260px] sm:h-[320px]">
+              <ArtificialHorizon />
+            </div>
+          </CardContent>
+        </Card>
+
+        <AttitudeReadout />
+      </div>
+
+      {/* --- Avatar estrutural + saude dos sensores --- */}
+      <div className="grid gap-6 xl:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -207,44 +378,43 @@ export default function Prontuario() {
               Avatar Estrutural — Corte Lateral
             </CardTitle>
             <CardDescription>
-              Diagnóstico por seção do casco (alarmes em tempo real)
+              Diagnostico por secao do casco (alarmes em tempo real)
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="rounded-lg panel-grid p-2">
-              <StructuralAvatar status={status} sensors={sensors} />
+            <div className="panel-grid rounded-lg p-2">
+              <StructuralAvatar
+                status={{
+                  algae_alert: algaeAlert,
+                  overheat_alert: overheat,
+                  battery_low: batteryLow,
+                }}
+                sensors={{ current_a, voltage_v, temp_c, rudder_deg }}
+              />
             </div>
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <SereiaAvatar health={health} size={56} showLabel />
               <div className="text-right text-xs text-muted-foreground">
                 <div>
-                  Praça de máquinas:{" "}
+                  Praca de maquinas:{" "}
                   <span
-                    style={{
-                      color: status.overheat_alert
-                        ? "var(--alert)"
-                        : "var(--ok)",
-                    }}
+                    style={{ color: overheat ? "var(--alert)" : "var(--ok)" }}
                   >
-                    {status.overheat_alert ? "superaquecida" : "nominal"}
+                    {overheat ? "superaquecida" : "nominal"}
                   </span>
                 </div>
                 <div>
                   Bateria:{" "}
                   <span
-                    style={{
-                      color: status.battery_low ? "var(--alert)" : "var(--ok)",
-                    }}
+                    style={{ color: batteryLow ? "var(--alert)" : "var(--ok)" }}
                   >
-                    {status.battery_low ? "crítica" : "nominal"}
+                    {batteryLow ? "critica" : "nominal"}
                   </span>
                 </div>
                 <div>
                   Leme:{" "}
                   <span
-                    style={{
-                      color: rudderHigh ? "var(--warn)" : "var(--ok)",
-                    }}
+                    style={{ color: rudderHigh ? "var(--warn)" : "var(--ok)" }}
                   >
                     {rudderHigh ? "carregado" : "nominal"}
                   </span>
@@ -253,39 +423,62 @@ export default function Prontuario() {
             </div>
           </CardContent>
         </Card>
+
+        <SensorHealthPanel />
       </div>
 
-      {/* --- Leitura numérica do estator --- */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {/* --- Calibracao de bancada do modelo termico --- */}
+      <ThermalCalibrationPanel />
+
+      {/* --- Leitura numerica --- */}
+      <div className="grid gap-4 grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         <MetricCard
-          label="Temperatura"
-          value={sensors.temp_c.toFixed(1)}
+          label="Estator"
+          value={motorTempFault ? "--" : temp_c.toFixed(1)}
           unit="°C"
           icon={<IconTemperature className="size-4" />}
           valueColor={overheat ? "var(--alert)" : undefined}
           hint={`Limiar ${OVERHEAT_C} °C`}
         />
         <MetricCard
-          label="Corrente"
-          value={sensors.current_a.toFixed(1)}
-          unit="A"
-          icon={<IconBolt className="size-4" />}
-          hint="Motor (ACS758)"
+          label="Nucleo virtual"
+          value={Number.isFinite(virtual) ? virtual.toFixed(1) : "--"}
+          unit="°C"
+          icon={<IconTemperature className="size-4" />}
+          valueColor="#ff9e2c"
+          hint="modelo preditivo"
         />
         <MetricCard
-          label="Tensão"
-          value={sensors.voltage_v.toFixed(2)}
+          label="Corrente"
+          value={current_a.toFixed(1)}
+          unit="A"
+          icon={<IconBolt className="size-4" />}
+          hint="ACS758 · EMA"
+        />
+        <MetricCard
+          label="Tensao"
+          value={voltage_v.toFixed(2)}
           unit="V"
           icon={<IconBattery className="size-4" />}
-          valueColor={status.battery_low ? "var(--alert)" : undefined}
+          valueColor={batteryLow ? "var(--alert)" : undefined}
         />
         <MetricCard
           label="Leme"
-          value={sensors.rudder_deg.toFixed(0)}
+          value={rudder_deg.toFixed(0)}
           unit="°"
           icon={<IconSteeringWheel className="size-4" />}
           valueColor={rudderHigh ? "var(--warn)" : undefined}
           hint={`Limiar ±${TATICA_RUDDER_DEG}°`}
+        />
+        <MetricCard
+          label="Umidade no casco"
+          value={ambientFault ? "--" : humidity.toFixed(0)}
+          unit="%"
+          icon={<IconDroplet className="size-4" />}
+          valueColor={
+            !ambientFault && humidity > 85 ? "var(--warn)" : undefined
+          }
+          hint={ambientFault ? "DHT22 em falha" : `${ambientTemp.toFixed(1)} °C`}
         />
       </div>
     </div>

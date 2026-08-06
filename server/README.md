@@ -1,17 +1,18 @@
 # Servidor (relay de telemetria)
 
-Diretório reservado para o servidor que recebe a telemetria do barco e a
-retransmite aos clientes conectados.
+Diretório reservado para um eventual servidor que receba a telemetria do barco e
+a retransmita aos clientes conectados.
 
-> **Diretriz Athenas v2.0:** o papel de **servidor relay não é mais um serviço à
-> parte**. Em produção ele é cumprido pelo **WebSocket servido diretamente pelo
-> ESP32** a bordo (WiFi STA — ver [`firmware/onboard`](../firmware/onboard)). Em
-> desenvolvimento e demonstração, o relay é o **mock-server** Node.
+> **Athenas v2.1:** o papel de **servidor relay não é um serviço à parte**. Ele é
+> cumprido pelo **WebSocket servido diretamente pelo ESP32** a bordo (WiFi STA —
+> ver [`firmware/onboard`](../firmware/onboard)), em `ws://<ip-do-esp32>/ws`.
+>
+> O **mock-server foi removido** nesta versão. O Athenas OS v2.1 não possui modo
+> de simulação: todo valor exibido no painel vem diretamente do hardware. Se
+> precisar dele para algum teste de bancada, ele continua no histórico do git
+> (`git log -- mock-server/`).
 
-Para subir um relay localmente, use o **mock-server**, que emite o contrato de
-telemetria a 5 Hz e permite rodar o dashboard sem o ESP32:
-
-➡️ [`mock-server/`](../mock-server) — `ws://localhost:8080`
-
-Este diretório fica como reserva caso seja necessário um relay autônomo no
-futuro (ex.: agregar múltiplas embarcações ou persistir sessões).
+Este diretório fica como reserva caso um relay autônomo se torne necessário no
+futuro — por exemplo para agregar múltiplas embarcações, persistir sessões em
+banco, ou fazer a ponte TLS (`wss://`) que permitiria servir o painel por HTTPS
+sem esbarrar na regra de *mixed content* dos navegadores.

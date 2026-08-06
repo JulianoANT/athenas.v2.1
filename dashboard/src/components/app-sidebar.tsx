@@ -1,7 +1,7 @@
 import * as React from "react";
 import { Link, useLocation } from "react-router-dom";
 import { IconLogout } from "@tabler/icons-react";
-import Logo from "@/assets/athenas-logo.png";
+import { ATHENAS_LOGO, ATHENAS_LOGO_ALT } from "@/assets/logo";
 
 import {
   Sidebar,
@@ -19,7 +19,7 @@ import { Button } from "@/components/ui/button";
 import { SereiaAvatar } from "@/components/sereia";
 import { routes } from "@/routes";
 import { useAuth } from "@/lib/auth";
-import { useTelemetry } from "@/lib/telemetry/provider";
+import { useHealth } from "@/lib/telemetry/selectors";
 
 function isActive(pathname: string, href: string): boolean {
   if (href === "/") return pathname === "/";
@@ -29,7 +29,9 @@ function isActive(pathname: string, href: string): boolean {
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const location = useLocation();
   const { isCrew, role, logout } = useAuth();
-  const { health } = useTelemetry();
+  // Seletor primitivo: a sidebar so re-renderiza quando o ESTADO DA SEREIA
+  // muda, nao a cada quadro de telemetria a 5 Hz.
+  const health = useHealth();
   const items = routes.filter((r) => !r.crewOnly || isCrew);
 
   return (
@@ -37,16 +39,16 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       <SidebarHeader>
         <div className="flex items-center gap-2 px-1 py-1.5">
           <img
-            src={Logo}
-            alt="Athenas"
+            src={ATHENAS_LOGO}
+            alt={ATHENAS_LOGO_ALT}
             className="size-8 shrink-0 rounded-md"
           />
           <div className="grid leading-tight group-data-[collapsible=icon]:hidden">
             <span className="font-tech text-sm font-medium tracking-wide">
-              ATHENAS OS
+              ATHENAS
             </span>
             <span className="text-[10px] text-sidebar-foreground/60">
-              v2.0 · DUNA 2026
+              Central de Telemetria
             </span>
           </div>
         </div>

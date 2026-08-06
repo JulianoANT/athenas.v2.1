@@ -12,6 +12,8 @@ import { ConnectionBadge } from "@/components/connection-badge";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { BootSequence } from "@/components/boot-sequence";
 import { LoginGate } from "@/components/login-gate";
+import { AwaitingHardware } from "@/components/awaiting-hardware";
+import { MeltdownAlert } from "@/components/thermal/meltdown-alert";
 import { Separator } from "@/components/ui/separator";
 import {
   SidebarInset,
@@ -40,21 +42,29 @@ function Shell() {
       <SidebarProvider>
         <AppSidebar />
         <SidebarInset>
-          <header className="flex h-16 shrink-0 items-center gap-2 border-b transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
-            <div className="flex w-full items-center gap-2 px-4">
+          {/* Header fixo no topo: em campo, com o painel rolado, o estado da
+              conexao e o alternador de tema precisam continuar acessiveis. */}
+          <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-2 border-b bg-background/95 backdrop-blur transition-[width,height] ease-linear sm:h-16 group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
+            <div className="flex w-full items-center gap-2 px-3 sm:px-4">
               <SidebarTrigger className="-ml-1" />
               <Separator
                 orientation="vertical"
-                className="mr-2 data-[orientation=vertical]:h-6"
+                className="mr-1 data-[orientation=vertical]:h-6 sm:mr-2"
               />
-              <Breadcrumbs routes={routes} rootLabel="Athenas OS" />
-              <div className="ml-auto flex items-center gap-2">
+              {/* Trilha de navegacao some no celular: nao ha largura para ela
+                  e o titulo da propria pagina ja cumpre o papel. */}
+              <div className="hidden min-w-0 sm:block">
+                <Breadcrumbs routes={routes} rootLabel="Athenas OS" />
+              </div>
+              <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
                 <ConnectionBadge />
                 <ThemeToggle />
               </div>
             </div>
           </header>
-          <div className="flex flex-1 flex-col gap-4 p-4">
+
+          <div className="flex flex-1 flex-col gap-4 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4">
+            <AwaitingHardware />
             <Routes>
               <RouterRoute path="/" element={<Dashboard />} />
               <RouterRoute path="/passadico" element={<Passadico />} />
@@ -80,6 +90,9 @@ function Shell() {
           </div>
         </SidebarInset>
       </SidebarProvider>
+
+      {/* Alerta global de fusao do estator: precisa aparecer em qualquer aba. */}
+      <MeltdownAlert />
     </HashRouter>
   );
 }

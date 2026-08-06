@@ -3,8 +3,30 @@
 // páginas (opacidade 10%) via saveGraphicsState/setGState/restoreGraphicsState.
 
 import { jsPDF, GState } from "jspdf";
-import autoTable from "jspdf-autotable";
+// -----------------------------------------------------------------------------
+//  IMPORTANTE — importado APENAS pelo efeito colateral.
+//
+//  O jspdf-autotable 3.x e distribuido em CommonJS. Sob o ESM do Vite, o
+//  `import autoTable from "jspdf-autotable"` devolve um OBJETO, nao a funcao —
+//  e a chamada `autoTable(doc, ...)` estourava com
+//  "TypeError: autoTable is not a function", derrubando a geracao do PDF
+//  inteira. (Era este o bug do relatorio que nao saia.)
+//
+//  A forma correta na v3 e usar o metodo que o plugin registra no prototipo do
+//  jsPDF ao ser carregado: `doc.autoTable(options)`. Nao remova este import
+//  "sem uso" — sem ele o metodo nao existe.
+// -----------------------------------------------------------------------------
+import "jspdf-autotable";
+import type { UserOptions } from "jspdf-autotable";
 import type { VesselHealth } from "@/types/telemetry";
+
+// Declaracao do que o plugin acrescenta ao jsPDF em tempo de execucao.
+declare module "jspdf" {
+  interface jsPDF {
+    autoTable: (options: UserOptions) => jsPDF;
+    lastAutoTable?: { finalY: number };
+  }
+}
 import type { SessionMetrics } from "./metrics";
 import { formatDuration } from "./metrics";
 import { OVERHEAT_C } from "@/lib/telemetry/contract";
@@ -41,9 +63,31 @@ export function buildConclusion(
     );
   }
 
+  // O nucleo virtual costuma ultrapassar o sensor fisico: e justamente essa
+  // diferenca que o gemeo digital existe para revelar.
+  if (m.virtualTempMax > m.tempMax + 2) {
+    parts.push(
+      `O gemeo digital termico projetou pico de ${m.virtualTempMax.toFixed(1)} C no nucleo do estator, ${(m.virtualTempMax - m.tempMax).toFixed(1)} C acima do que o sensor fisico registrou — margem atribuida a inercia termica do DS18B20.`,
+    );
+  }
+
   parts.push(
     `Corrente de pico do ESC Hobbywing 1060 de ${m.peakCurrent.toFixed(1)} A (media ${m.avgCurrent.toFixed(1)} A).`,
   );
+
+  // Estabilidade: so vale reportar se houve leitura de IMU na sessao.
+  if (m.maxRoll > 0 || m.maxPitch > 0) {
+    parts.push(
+      `Cinematica naval: adernamento maximo de ${m.maxRoll.toFixed(1)} graus e caturro maximo de ${m.maxPitch.toFixed(1)} graus, resultando em score de estabilidade de ${m.stabilityScore.toFixed(0)}/100.`,
+    );
+  }
+
+  if (m.faultySamples > 0) {
+    const pct = (m.faultySamples / m.samples) * 100;
+    parts.push(
+      `Atencao: ${m.faultySamples} de ${m.samples} amostras (${pct.toFixed(1)}%) foram registradas com pelo menos um sensor em falha; os valores correspondentes sao a ultima leitura valida retida pelo firmware.`,
+    );
+  }
 
   if (m.distance_m > 0) {
     parts.push(
@@ -120,14 +164,9 @@ function stampAllPages(doc: jsPDF): void {
   }
 }
 
-interface AutoTableResult {
-  finalY: number;
-}
-
-/** Lê o finalY do último autoTable de forma tipada (augmentação v3). */
+/** Lê o finalY do último autoTable, para posicionar o que vem depois. */
 function lastFinalY(doc: jsPDF, fallback: number): number {
-  const t = (doc as unknown as { lastAutoTable?: AutoTableResult })
-    .lastAutoTable;
+  const t = doc.lastAutoTable;
   return t && typeof t.finalY === "number" ? t.finalY : fallback;
 }
 
@@ -153,11 +192,11 @@ export function exportReport(
   doc.setTextColor("#FFFFFF");
   doc.setFont("helvetica", "bold");
   doc.setFontSize(18);
-  doc.text("EQUIPE ATHENAS — RELATORIO TECNICO", margin, 42);
+  doc.text("ATHENAS - CENTRAL DE TELEMETRIA", margin, 42);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
   doc.setTextColor(CYAN);
-  doc.text("Athenas OS v2.0 · Telemetria de Embarcacao Autonoma", margin, 62);
+  doc.text("Relatorio Tecnico · Equipe Athenas · DUNA 2026", margin, 62);
 
   const generatedAt = new Date();
   doc.setTextColor("#FFFFFF");
@@ -187,19 +226,26 @@ export function exportReport(
   y += 40;
 
   // --- Tabela de métricas ---
-  autoTable(doc, {
+  // `doc.autoTable(...)`, e não `autoTable(doc, ...)` — ver a nota do import.
+  doc.autoTable({
     startY: y,
     head: [["Metrica", "Valor"]],
     body: [
       ["Velocidade Maxima", `${m.maxKnots.toFixed(2)} nos (${m.maxKmh.toFixed(1)} km/h)`],
+      ["Velocidade Media (em movimento)", `${m.avgKnots.toFixed(2)} nos`],
       ["Corrente de Pico (ESC Hobbywing 1060)", `${m.peakCurrent.toFixed(2)} A`],
       ["Corrente Media", `${m.avgCurrent.toFixed(2)} A`],
       ["Energia Consumida", `${m.energy_wh.toFixed(2)} Wh`],
       ["Consumo Especifico (SEC)", `${m.sec_wh_per_m.toFixed(3)} Wh/m`],
-      ["Temperatura Maxima do Estator", `${m.tempMax.toFixed(1)} C`],
+      ["Temperatura Maxima do Estator (sensor)", `${m.tempMax.toFixed(1)} C`],
+      ["Temperatura Maxima do Nucleo (virtual)", `${m.virtualTempMax.toFixed(1)} C`],
+      ["Adernamento Maximo (roll)", `${m.maxRoll.toFixed(1)} graus`],
+      ["Caturro Maximo (pitch)", `${m.maxPitch.toFixed(1)} graus`],
+      ["Score de Estabilidade", `${m.stabilityScore.toFixed(0)} / 100`],
       ["Distancia Percorrida", `${m.distance_m.toFixed(1)} m`],
       ["Duracao da Sessao", `${formatDuration(m.duration_s)} (${m.duration_s.toFixed(0)} s)`],
       ["Amostras (1 Hz)", `${m.samples}`],
+      ["Amostras com Sensor em Falha", `${m.faultySamples}`],
     ],
     theme: "striped",
     styles: { font: "helvetica", fontSize: 10, cellPadding: 6 },

@@ -1,5 +1,5 @@
 import * as React from "react";
-import Logo from "@/assets/athenas-logo.png";
+import { ATHENAS_LOGO, ATHENAS_LOGO_ALT } from "@/assets/logo";
 
 // Sequência de inicialização (Boot Sequence): terminal emulando uma varredura
 // de sistemas, seguido do logotipo da Athenas surgindo com glow fade-in antes
@@ -80,12 +80,12 @@ export function BootSequence({ onDone }: { onDone: () => void }) {
 
       {showLogo && (
         <div className="animate-glow-in mt-8 flex flex-col items-center">
-          <img src={Logo} alt="Athenas" className="h-24 w-24 object-contain" />
+          <img src={ATHENAS_LOGO} alt={ATHENAS_LOGO_ALT} className="h-24 w-24 object-contain" />
           <div className="mt-3 font-tech text-lg font-medium uppercase tracking-[0.3em] text-[#48cae4]">
             Athenas OS
           </div>
           <div className="font-tech text-[10px] tracking-[0.4em] text-[#48cae4]/60">
-            v2.0 · DUNA 2026
+            v2.1 · DUNA 2026
           </div>
         </div>
       )}

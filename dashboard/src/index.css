@@ -168,9 +168,42 @@
   body {
     @apply bg-background text-foreground;
     margin: 0;
+    /* Impede o "puxar para atualizar" e o efeito elastico do iOS: com o mapa
+       ocupando a tela toda no celular, arrastar dentro dele nao pode recarregar
+       o painel no meio da prova. */
+    overscroll-behavior-y: none;
   }
   html {
     @apply font-sans;
+    /* O painel e lido no sol, muitas vezes de relance. Evita que o iOS aumente
+       a fonte sozinho ao girar o aparelho e quebre o alinhamento dos numeros. */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  /* Nenhuma pagina pode rolar horizontalmente: no celular isso e sempre um
+     bug de layout, nunca uma intencao de design. */
+  html,
+  body {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  /* Numeros de telemetria mudam 5x por segundo. Sem largura tabular, a largura
+     de cada digito varia e o valor "treme" na tela, atrapalhando a leitura. */
+  .font-tech {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Respeita quem configurou reducao de movimento no sistema. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 }
 
@@ -246,10 +279,120 @@
   animation: athenas-blink 1s step-end infinite;
 }
 
+/* ===================== Leaflet ===================== */
+
 /* O Leaflet injeta seu próprio fundo branco; harmoniza no modo noite */
 .dark .leaflet-container {
   background: #0a1124;
 }
 .leaflet-container {
   font-family: var(--mono);
+}
+
+/* ---------------------------------------------------------------------------
+   CARTA NOTURNA — azul escuro, no espírito do modo escuro do Google Maps
+
+   Os tiles do OpenStreetMap só existem em versão CLARA. Como a carta precisa
+   funcionar OFFLINE (o cache é baixado uma vez e embarcado no build), não dá
+   para trocar por um provedor de tiles escuros: isso exigiria internet na
+   prova, que é justamente o que o cache resolve.
+
+   A solução é transformar os tiles claros em escuros no próprio navegador, via
+   filtro CSS acelerado por GPU:
+
+     invert(1)          inverte tudo — o branco do papel vira preto
+     hue-rotate(190deg) recoloca as cores no lugar (sem isto, a água azul
+                        ficaria laranja depois da inversão)
+     brightness/contrast/saturate  afinam para o azul-marinho da identidade
+
+   Custo: zero requisição de rede e zero byte a mais no build. O filtro roda na
+   composição da GPU, então não pesa no orçamento de quadro nem com o mapa
+   sendo arrastado.
+   --------------------------------------------------------------------------- */
+.dark .leaflet-tile-pane {
+  filter: invert(1) hue-rotate(190deg) brightness(0.92) contrast(0.88)
+    saturate(0.75);
+}
+
+/* O filtro é aplicado APENAS ao painel dos tiles, nunca ao painel de overlays.
+   Se fosse aplicado ao container inteiro, a trilha ciano, o vetor de predição
+   vermelho e o marcador da embarcação seriam invertidos junto — e as cores de
+   alerta perderiam o significado exatamente quando mais importam. */
+.dark .leaflet-overlay-pane,
+.dark .leaflet-marker-pane,
+.dark .leaflet-shadow-pane,
+.dark .leaflet-tooltip-pane,
+.dark .leaflet-popup-pane {
+  filter: none;
+}
+
+/* Controles de zoom e atribuição no tom da carta noturna. */
+.dark .leaflet-control-zoom a {
+  background: color-mix(in oklab, var(--card) 92%, transparent);
+  color: var(--foreground);
+  border-color: color-mix(in oklab, var(--cyan) 22%, transparent);
+}
+.dark .leaflet-control-zoom a:hover {
+  background: var(--card);
+  color: var(--cyan);
+}
+.dark .leaflet-control-attribution {
+  background: color-mix(in oklab, var(--card) 78%, transparent);
+  color: var(--muted-foreground);
+}
+.dark .leaflet-control-attribution a {
+  color: var(--cyan);
+}
+
+/* Alvos de toque do Leaflet no celular. O padrao (26px) e menor que os 44px
+   recomendados e vira uma loteria com o dedo molhado na margem do lago. */
+@media (max-width: 640px) {
+  .leaflet-touch .leaflet-bar a {
+    width: 36px;
+    height: 36px;
+    line-height: 36px;
+  }
+  .leaflet-control-attribution {
+    font-size: 9px;
+  }
+}
+
+/* ===================== uPlot ===================== */
+/* O uPlot traz um CSS proprio de tema claro. Aqui ele passa a seguir os tokens
+   do Athenas, para funcionar nos modos Sol e Noite sem duplicar folha. */
+.u-legend {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.u-legend .u-marker {
+  border-radius: 2px;
+}
+.u-legend th,
+.u-legend td {
+  padding: 0 4px;
+}
+.u-select {
+  background: color-mix(in oklab, var(--cyan) 16%, transparent);
+}
+.u-cursor-x,
+.u-cursor-y {
+  border-color: color-mix(in oklab, var(--cyan) 45%, transparent) !important;
+}
+/* No celular a legenda ao vivo do uPlot come metade da altura util do
+   grafico; o valor instantaneo ja aparece nos cartoes de KPI. */
+@media (max-width: 640px) {
+  .u-legend {
+    display: none;
+  }
+}
+
+/* ===================== Impressão ===================== */
+/* A banca eventualmente imprime a tela. Sem isto, o fundo navy consome o
+   toner e o texto ciano some no papel. */
+@media print {
+  [data-sidebar],
+  header {
+    display: none !important;
+  }
 }
