@@ -1,4 +1,14 @@
-
 # Credenciais de WiFi — cada membro cria o seu a partir do .example.
 # Senha de rede NAO vai para o repositorio.
 firmware/shared/wifi_credentials.h
+
+# Dependências locais / build gerado
+node_modules/
+dist/
+.vite/
+.pio/
+.vscode/
+*.log
+*.tmp
+.env
+.env.*
